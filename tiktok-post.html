@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video veröffentlichen – UnlockYourLife</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #141414;
+      --border: #242424;
+      --accent: #fe2c55;
+      --accent-soft: rgba(254,44,85,0.12);
+      --text: #f0f0f0;
+      --text-muted: #888;
+      --green: #25f4ee;
+      --radius: 12px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      width: 100%;
+      max-width: 480px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .tiktok-logo {
+      width: 28px;
+      height: 28px;
+    }
+
+    .card-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.2px;
+    }
+
+    .card-header span {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .creator-row {
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--accent), var(--green));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .creator-info .name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .creator-info .handle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .verified {
+      margin-left: auto;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 8px;
+      border-radius: 20px;
+      border: 1px solid var(--accent);
+    }
+
+    .video-preview {
+      margin: 16px 24px;
+      background: #1a1a1a;
+      border-radius: var(--radius);
+      aspect-ratio: 9/5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .video-preview-inner {
+      text-align: center;
+    }
+
+    .video-preview-inner svg {
+      opacity: 0.3;
+    }
+
+    .video-preview-inner p {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    .section {
+      padding: 0 24px 16px;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 10px;
+    }
+
+    .select-wrapper {
+      position: relative;
+    }
+
+    select {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 14px;
+      padding: 10px 36px 10px 12px;
+      appearance: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .select-arrow {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+      color: var(--text-muted);
+      font-size: 10px;
+    }
+
+    .toggles {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #1a1a1a;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    .toggle-label {
+      font-size: 13px;
+    }
+
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: #333;
+      border-radius: 22px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      top: 3px;
+      left: 3px;
+      transition: transform 0.2s;
+    }
+
+    .toggle input:checked + .toggle-track {
+      background: var(--green);
+    }
+
+    .toggle input:checked + .toggle-track::after {
+      transform: translateX(18px);
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 4px 24px 16px;
+    }
+
+    .disclosure-box {
+      margin: 0 24px 16px;
+      background: #1a0a0d;
+      border: 1px solid rgba(254,44,85,0.25);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    .disclosure-box .disc-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .disclosure-box .disc-header span {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .disclosure-box p {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .disclosure-toggles {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .disc-toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .disc-toggle-row span {
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    .legal-text {
+      margin: 0 24px 20px;
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    .legal-text a {
+      color: var(--green);
+      text-decoration: none;
+    }
+
+    .btn-publish {
+      display: block;
+      width: calc(100% - 48px);
+      margin: 0 24px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.2px;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+
+    .btn-publish:hover {
+      opacity: 0.9;
+    }
+
+    .btn-publish:active {
+      transform: scale(0.98);
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-muted);
+      padding: 0 24px 20px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+
+  <div class="card-header">
+    <svg class="tiktok-logo" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M22.5 4C22.5 4 23 8 27 9.5V13.5C27 13.5 24 13 22.5 11V21C22.5 26 18.5 29 14 29C9.5 29 6 25.5 6 21C6 16.5 9.5 13 14 13V17C11.5 17 9.5 18.8 9.5 21C9.5 23.2 11.5 25 14 25C16.5 25 18.5 23.2 18.5 21V4H22.5Z" fill="white"/>
+    </svg>
+    <h1>Auf TikTok veröffentlichen</h1>
+    <span>UnlockYourLife</span>
+  </div>
+
+  <div class="creator-row">
+    <div class="avatar">R</div>
+    <div class="creator-info">
+      <div class="name">Ralf Meyer</div>
+      <div class="handle">@unlockyourlife.de</div>
+    </div>
+    <div class="verified">Verbunden</div>
+  </div>
+
+  <div class="video-preview">
+    <div class="video-preview-inner">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="white">
+        <path d="M8 5v14l11-7z"/>
+      </svg>
+      <p>Vorschau wird geladen…</p>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Sichtbarkeit</div>
+    <div class="select-wrapper">
+      <select id="privacy">
+        <option value="PUBLIC_TO_EVERYONE">Öffentlich – jeder kann sehen</option>
+        <option value="MUTUAL_FOLLOW_FRIENDS">Freunde – gegenseitige Follower</option>
+        <option value="SELF_ONLY">Privat – nur ich</option>
+      </select>
+      <span class="select-arrow">▼</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Interaktion</div>
+    <div class="toggles">
+      <div class="toggle-row">
+        <span class="toggle-label">Duett erlauben</span>
+        <label class="toggle">
+          <input type="checkbox" id="duet" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Stitch erlauben</span>
+        <label class="toggle">
+          <input type="checkbox" id="stitch" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <span class="toggle-label">Kommentare erlauben</span>
+        <label class="toggle">
+          <input type="checkbox" id="comments" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="disclosure-box">
+    <div class="disc-header">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="#fe2c55"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+      <span>Offenlegung kommerzieller Inhalte</span>
+    </div>
+    <p>Gib an ob dieses Video Werbung oder gesponserte Inhalte enthält. Das ist gesetzlich vorgeschrieben.</p>
+    <div class="disclosure-toggles">
+      <div class="disc-toggle-row">
+        <span>Eigene Werbung (Affiliate)</span>
+        <label class="toggle">
+          <input type="checkbox" id="branded" checked>
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+      <div class="disc-toggle-row">
+        <span>Bezahlte Partnerschaft</span>
+        <label class="toggle">
+          <input type="checkbox" id="paid">
+          <span class="toggle-track"></span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <p class="legal-text">
+    Mit der Veröffentlichung bestätigst du, dass du die
+    <a href="https://www.tiktok.com/legal/page/global/terms-of-service/de-DE" target="_blank">Nutzungsbedingungen</a>
+    und
+    <a href="https://www.tiktok.com/legal/page/global/privacy-policy/de-DE" target="_blank">Datenschutzrichtlinien</a>
+    von TikTok sowie die
+    <a href="https://digipartner73.github.io/ds24-links/terms.html" target="_blank">Nutzungsbedingungen</a>
+    von UnlockYourLife akzeptierst.
+  </p>
+
+  <button class="btn-publish" onclick="publish()">Jetzt veröffentlichen</button>
+
+  <p class="footer-note">
+    Durch UnlockYourLife Creator Tool powered by<br>
+    <a href="https://digipartner73.github.io/ds24-links/" style="color:#fe2c55;text-decoration:none;">digipartner73.github.io/ds24-links</a>
+  </p>
+
+</div>
+
+<script>
+function publish() {
+  const btn = document.querySelector('.btn-publish');
+  btn.textContent = 'Wird veröffentlicht…';
+  btn.disabled = true;
+  btn.style.opacity = '0.6';
+  setTimeout(() => {
+    btn.textContent = '✓ Erfolgreich veröffentlicht';
+    btn.style.background = '#25f4ee';
+    btn.style.color = '#000';
+  }, 2000);
+}
+</script>
+
+</body>
+</html>
