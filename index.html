@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Meine Top-Empfehlungen</title>
-<link rel="icon" href="icon.png" type="image/png">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="https://digipartner73.github.io/ds24-links/icon.png">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;700&family=DM+Sans:wght@300;400;500&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #0d0d0d;
@@ -14,12 +14,14 @@
     --text: #f0f0f0;
     --muted: #888;
     --card-bg: #1a1a1a;
+    --gold: #c9a84c;
   }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 300; min-height: 100vh; }
-  .site-header { display: flex; align-items: center; gap: 10px; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }
-  .site-header img { width: 28px; height: 28px; border-radius: 6px; }
-  .site-header span { font-size: 14px; font-weight: 500; color: var(--text); }
+  site-header { border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem; position: sticky; top: 0; background: rgba(13,13,13,0.95); backdrop-filter: blur(12px); z-index: 10; }
+  .site-header { border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem; position: sticky; top: 0; background: rgba(13,13,13,0.95); backdrop-filter: blur(12px); z-index: 10; }
+  .logo-icon { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; }
+  .logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: var(--gold); letter-spacing: 0.02em; }
   header { text-align: center; padding: 4rem 1.5rem 2rem; border-bottom: 1px solid var(--border); }
   header .tag { display: inline-block; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 1rem; font-weight: 500; }
   header h1 { font-family: 'Playfair Display', serif; font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 700; line-height: 1.1; margin-bottom: 0.75rem; }
@@ -51,10 +53,12 @@
 </style>
 </head>
 <body>
+
 <div class="site-header">
-  <img src="icon.png" alt="Logo">
-  <span>DS24 Affiliate Automation</span>
+  <img src="https://digipartner73.github.io/ds24-links/icon.png" alt="DS24 Affiliate Automation Logo" class="logo-icon">
+  <span class="logo">DS24 Affiliate Automation</span>
 </div>
+
 <header>
   <div class="tag">✦ Täglich aktualisiert</div>
   <h1>Meine Top&#8209;Empfehlungen</h1>
@@ -64,13 +68,15 @@
     <span id="count-text">Wird geladen...</span>
   </div>
 </header>
+
 <main id="product-list">
   <div class="loading"><div class="spinner"></div>Produkte werden geladen...</div>
 </main>
+
 <footer>* Diese Seite enthält Affiliate-Links. Wenn du über einen dieser Links kaufst, erhalte ich eine Provision. Für dich entstehen dabei keine Mehrkosten.</footer>
+
 <script>
   const WEBHOOK_URL = 'https://hook.eu1.make.com/kk973ehbeb296119xriqc1sjt6x56tdh';
-
   async function loadProducts() {
     const list = document.getElementById('product-list');
     const countText = document.getElementById('count-text');
@@ -98,11 +104,9 @@
       countText.textContent = '';
     }
   }
-
   function escHtml(str) {
     return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
-
   loadProducts();
 </script>
 </body>
