@@ -11,7 +11,7 @@
   </style>
 </head>
 <body>
-  <div class="container"><p>⏳ Weiterleitung läuft...</p></div>
+  <div class="container"><p>&#9203; Weiterleitung laeuft...</p></div>
   <script>
     (function () {
       var params = new URLSearchParams(window.location.search);
@@ -24,7 +24,8 @@
         fetch('https://hook.eu1.make.com/n4g78ewffc2r2wh6lsjv5smxusdrwai8', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_id: productId, source: source, produktname: name, timestamp: new Date().toISOString() })
+          body: JSON.stringify({ product_id: productId, source: source, produktname: name, timestamp: new Date().toISOString() }),
+          keepalive: true
         });
       } catch (e) {}
       window.location.replace(targetUrl);
