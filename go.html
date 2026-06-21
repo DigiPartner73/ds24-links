@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weiterleitung...</title>
+  <link rel="icon" type="image/png" href="https://digipartner73.github.io/ds24-links/icon.png">
+  <style>
+    body { font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f9f9f9; }
+    .container { text-align: center; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container"><p>⏳ Weiterleitung läuft...</p></div>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var productId = params.get('p');
+      var source    = params.get('src') || 'unknown';
+      var name      = params.get('name') || '';
+      if (!productId) { window.location.href = 'https://digipartner73.github.io/ds24-links/'; return; }
+      var targetUrl = 'https://www.digistore24.com/redir/' + productId + '/info2641/';
+      try {
+        fetch('https://hook.eu1.make.com/n4g78ewffc2r2wh6lsjv5smxusdrwai8', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ product_id: productId, source: source, produktname: name, timestamp: new Date().toISOString() })
+        });
+      } catch (e) {}
+      window.location.replace(targetUrl);
+    })();
+  </script>
+</body>
+</html>
