@@ -5,9 +5,6 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
-env:
-  MAKE_WEBHOOK: https://hook.eu1.make.com/882803j9m5617e1ozp7jhuviicsrpjeb
-
 jobs:
   scout:
     runs-on: ubuntu-latest
@@ -18,54 +15,72 @@ jobs:
         run: |
           node << 'NODEEOF'
           const https = require('https');
+          const WEBHOOK = 'https://hook.eu1.make.com/882803j9m5617e1ozp7jhuviicsrpjeb';
 
-          const makeReq = (opts, body) => new Promise((res, rej) => {
-            const req = https.request(opts, r => {
+          const req = (opts, body) => new Promise((res, rej) => {
+            const r = https.request(opts, resp => {
               let d = '';
-              r.on('data', c => d += c);
-              r.on('end', () => res({ status: r.statusCode, ct: r.headers['content-type'] || '', body: d }));
+              resp.on('data', c => d += c);
+              resp.on('end', () => res({ status: resp.statusCode, ct: resp.headers['content-type']||'', body: d }));
             });
-            req.on('error', rej);
-            if (body) req.write(body);
-            req.end();
+            r.on('error', rej);
+            if (body) r.write(body);
+            r.end();
           });
+
+          const sendWebhook = async (data) => {
+            const body = JSON.stringify(data);
+            return req({
+              hostname: 'hook.eu1.make.com',
+              path: '/' + WEBHOOK.split('/').pop(),
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+            }, body);
+          };
 
           (async () => {
             const rawKey = process.env.CLICKBANK_AUTH || '';
+            const authHeader = rawKey ? rawKey + ':' : null;
 
-            // Test 1: ohne Auth (public access?)
-            console.log('--- TEST 1: No Auth ---');
-            const r1 = await makeReq({
+            // Try without auth
+            const r1 = await req({
               hostname: 'api.clickbank.com',
               path: '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=5',
               method: 'GET',
-              headers: { 'Accept': 'application/json' }
+              headers: Object.assign({ 'Accept': 'application/json' }, authHeader ? { 'Authorization': authHeader } : {})
             });
-            console.log('Status:', r1.status, '| CT:', r1.ct);
+
+            console.log('Status:', r1.status, 'CT:', r1.ct);
             console.log('Body:', r1.body.slice(0, 300));
 
-            // Test 2: mit DEV_KEY: format
-            if (rawKey) {
-              console.log('--- TEST 2: With DEV_KEY: format ---');
-              const r2 = await makeReq({
-                hostname: 'api.clickbank.com',
-                path: '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=5',
-                method: 'GET',
-                headers: { 'Accept': 'application/json', 'Authorization': rawKey + ':' }
-              });
-              console.log('Status:', r2.status, '| CT:', r2.ct);
-              console.log('Body:', r2.body.slice(0, 300));
+            // Send diagnostic to Make.com
+            await sendWebhook({
+              _diagnostic: true,
+              cb_status: r1.status,
+              cb_ct: r1.ct,
+              cb_body: r1.body.slice(0, 500),
+              key_present: !!rawKey,
+              products: []
+            });
 
-              // Test 3: mit raw key
-              console.log('--- TEST 3: With raw key only ---');
-              const r3 = await makeReq({
-                hostname: 'api.clickbank.com',
-                path: '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=5',
-                method: 'GET',
-                headers: { 'Accept': 'application/json', 'Authorization': rawKey }
-              });
-              console.log('Status:', r3.status, '| CT:', r3.ct);
-              console.log('Body:', r3.body.slice(0, 300));
+            // If successful, parse and send real products
+            if (r1.status === 200 && r1.ct.includes('json')) {
+              const parsed = JSON.parse(r1.body);
+              const raw = parsed.results || parsed.products || parsed.hits || parsed.items || [];
+              if (raw.length) {
+                const products = raw.map(p => ({
+                  site: p.site || p.nickname || '',
+                  title: p.title || p.name || '',
+                  description: p.description || '',
+                  marketplaceStats: {
+                    gravity: parseFloat(p.gravity || 0),
+                    averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || 0),
+                    category: p.category || ''
+                  }
+                }));
+                await sendWebhook({ products });
+                console.log('Sent', products.length, 'products');
+              }
             }
           })();
           NODEEOF
