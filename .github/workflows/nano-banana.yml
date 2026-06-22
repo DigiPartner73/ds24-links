@@ -12,7 +12,7 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Generate clips and render videos
         env:
@@ -23,31 +23,13 @@ jobs:
           import os
           import sys
           import time
-          import socket
-          from datetime import datetime, timezone
-          from requests.adapters import HTTPAdapter
 
-          # ── TCP keepalive adapter ─────────────────────────────────────────────
-          # FIX (v4): GitHub Actions uses Azure-hosted runners. Azure NAT Gateway
-          # drops idle TCP connections after ~240-350 seconds without data flow.
-          # NB API generation takes 2-5+ min → no data flows → connection dropped.
-          # Root cause: not a wrong endpoint or params, but NAT idle timeout.
-          # Fix: TCP keepalive probes every 30s keep the NAT table entry alive.
-          class TCPKeepaliveAdapter(HTTPAdapter):
-              """Prevents Azure/AWS NAT Gateway from dropping long NB API connections."""
-              def init_poolmanager(self, *args, **kwargs):
-                  kwargs['socket_options'] = [
-                      (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),    # Enable TCP keepalive
-                      (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60),   # Start after 60s idle
-                      (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30),  # Probe every 30s
-                      (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 10),    # 10 failed probes = drop
-                  ]
-                  super().init_poolmanager(*args, **kwargs)
-
-          # Session for NB API only (long-lived connections need keepalive)
-          nb_session = requests.Session()
-          nb_session.mount('https://', TCPKeepaliveAdapter())
-          nb_session.mount('http://', TCPKeepaliveAdapter())
+          # ── v5: Pexels stock videos instead of NB API ────────────────────────
+          # Root cause analysis: NB API holds connections for ~375s then returns 429.
+          # This happens on every single run regardless of rate limit resets.
+          # NB is too slow/overloaded for our use case (4 clips × 375s = 25 min/product).
+          # Pexels: free, instant (<1s per clip), reliable, no rate limits for our volume.
+          # Pexels video files are direct CDN links — JSON2Video downloads & renders them.
 
           AT_TOKEN = os.environ['AIRTABLE_TOKEN']
           BASE_ID = 'apppfrE10FwXz9IMY'
@@ -69,48 +51,12 @@ jobs:
               recs = r.get('records', [])
               return recs[0]['fields'].get('Wert', '') if recs else ''
 
-          def set_config(key, value):
-              r = at_get(CONFIG_TABLE, {'filterByFormula': f'{{Parameter}}="{key}"', 'maxRecords': 1})
-              recs = r.get('records', [])
-              if recs:
-                  rid = recs[0]['id']
-                  requests.patch(f'https://api.airtable.com/v0/{BASE_ID}/{CONFIG_TABLE}/{rid}',
-                      headers=AT_HEADERS, json={'fields': {'Wert': value}})
-              else:
-                  requests.post(f'https://api.airtable.com/v0/{BASE_ID}/{CONFIG_TABLE}',
-                      headers=AT_HEADERS, json={'records': [{'fields': {'Parameter': key, 'Wert': value}}]})
-
-          NB_API_KEY = get_config('nanobanana_api_key')
+          PEXELS_KEY = get_config('pexels_api_key')
           J2V_API_KEY = get_config('json2video_api_key')
-          if not NB_API_KEY: print('ERROR: nanobanana_api_key missing'); sys.exit(1)
+          if not PEXELS_KEY: print('ERROR: pexels_api_key missing'); sys.exit(1)
           if not J2V_API_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
-          print(f'Keys loaded: NB={NB_API_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
-          print(f'TCP keepalive: enabled (idle=60s, interval=30s, count=10)')
-
-          # ── Rate limit pre-check ──────────────────────────────────────────────
-          # NB API returns UTC timestamps WITHOUT timezone suffix (e.g. "2026-06-22 19:18:54").
-          # Always normalise to UTC-aware before comparing.
-          RATE_LIMIT_BUFFER_SECS = 120  # 2-min safety margin after NB reset
-
-          rate_limit_reset_str = get_config('nanobanana_rate_limit_reset')
-          if rate_limit_reset_str:
-              try:
-                  norm = rate_limit_reset_str.strip().replace(' ', 'T')
-                  if norm.endswith('Z'):
-                      norm = norm[:-1] + '+00:00'
-                  elif '+' not in norm and norm.count('-') <= 2:
-                      norm += '+00:00'
-                  reset_dt = datetime.fromisoformat(norm)
-                  now_utc = datetime.now(timezone.utc)
-                  remaining = (reset_dt - now_utc).total_seconds()
-                  if remaining > -RATE_LIMIT_BUFFER_SECS:
-                      wait = int(remaining + RATE_LIMIT_BUFFER_SECS)
-                      print(f'Rate limit active. Clear in ~{wait}s (reset={rate_limit_reset_str}). Skipping.')
-                      sys.exit(0)
-                  print(f'Rate limit cleared ({int(-remaining)}s ago). Proceeding.')
-              except Exception as e:
-                  print(f'ERROR parsing rate_limit_reset "{rate_limit_reset_str}": {e}. Skipping.')
-                  sys.exit(0)
+          print(f'Keys loaded: Pexels={PEXELS_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
+          print(f'Engine: Pexels stock videos (v5)')
 
           # ── Find record to process ────────────────────────────────────────────
           resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
@@ -134,96 +80,64 @@ jobs:
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
           print(f'Voiceover DL URLs OK')
 
-          base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle scene'
-          # NB API: no aspect_ratio param — embed in prompt text
-          suffix = ', vertical 9:16 portrait video, cinematic, smooth motion, no face, no text, no watermark'
-          prompts = [
-              (fields.get('Pexels_Query') or base_q) + suffix,
-              (fields.get('Pexels_Query_2') or base_q + ' close detail shot') + suffix,
-              (fields.get('Pexels_Query_3') or base_q + ' wide establishing shot') + suffix,
-              (fields.get('Pexels_Query_4') or base_q + ' slow motion') + suffix,
+          base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
+          queries = [
+              fields.get('Pexels_Query') or base_q,
+              fields.get('Pexels_Query_2') or (base_q + ' close detail'),
+              fields.get('Pexels_Query_3') or (base_q + ' wide shot'),
+              fields.get('Pexels_Query_4') or (base_q + ' slow motion'),
           ]
-          print(f'Prompts: {[p[:60] for p in prompts]}')
+          print(f'Queries: {[q[:55] for q in queries]}')
 
-          NB_HEADERS = {'Authorization': f'Bearer {NB_API_KEY}', 'Content-Type': 'application/json'}
+          # ── Pexels video fetch ────────────────────────────────────────────────
+          # Authorization: Raw key, NO "Bearer" prefix (Bug #3 in preferences)
+          PEXELS_HEADERS = {'Authorization': PEXELS_KEY}
 
-          def generate_clip(prompt, clip_num):
-              print(f'[{time.strftime("%H:%M:%S")}] Clip {clip_num}/4: connecting to NB API...')
-              t_start = time.time()
-              try:
-                  # v4 fix: use nb_session (TCP keepalive) instead of requests.post
-                  # Endpoint: /api/v1/text-to-video (documented, no .php)
-                  # Params: only prompt, duration, resolution (documented)
-                  # Timeout: 600s — keepalive prevents NAT from dropping before response
-                  resp = nb_session.post(
-                      'https://nanobananavideo.com/api/v1/text-to-video',
-                      headers=NB_HEADERS,
-                      json={'prompt': prompt, 'resolution': '720p', 'duration': 3},
-                      timeout=600
-                  )
-                  elapsed = int(time.time() - t_start)
-                  print(f'HTTP {resp.status_code} after {elapsed}s')
-
-                  if resp.status_code == 429:
-                      try:
-                          data = resp.json()
-                      except Exception:
-                          data = {}
-                      rl = data.get('rate_limit', {})
-                      reset_at = rl.get('reset_at', '')
-                      reset_secs = rl.get('reset_in_seconds', 1800)
-                      print(f'RATE LIMIT on clip {clip_num}: reset_at="{reset_at}" secs={reset_secs}')
-                      if reset_at:
-                          set_config('nanobanana_rate_limit_reset', reset_at)
-                      else:
-                          import datetime as dt_module
-                          future = datetime.now(timezone.utc) + dt_module.timedelta(seconds=max(reset_secs, 1800))
-                          set_config('nanobanana_rate_limit_reset', future.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
-                      at_patch(record_id, {'Status': 'clips_rendering'})
-                      sys.exit(0)
-
-                  if resp.status_code != 200:
-                      print(f'HTTP {resp.status_code}: {resp.text[:500]}')
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-
+          def get_pexels_clip(query, clip_num):
+              print(f'[{time.strftime("%H:%M:%S")}] Clip {clip_num}/4: Pexels "{query[:45]}"...')
+              # Attempt 1: portrait orientation, large size
+              # Attempt 2: fallback without orientation (broader results)
+              for attempt, params in enumerate([
+                  {'query': query, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
+                  {'query': query.split(',')[0].strip(), 'per_page': 5},
+              ]):
                   try:
-                      data = resp.json()
+                      r = requests.get('https://api.pexels.com/videos/search',
+                          headers=PEXELS_HEADERS, params=params, timeout=15)
+                      if r.status_code != 200:
+                          print(f'Pexels HTTP {r.status_code} attempt {attempt+1}: {r.text[:150]}')
+                          continue
+                      videos = r.json().get('videos', [])
+                      if not videos:
+                          print(f'No results attempt {attempt+1} for "{params["query"][:40]}"')
+                          continue
+                      # Prefer highest resolution file (largest height)
+                      video = videos[0]
+                      files = sorted(video.get('video_files', []),
+                                     key=lambda f: f.get('height', 0), reverse=True)
+                      if not files:
+                          print(f'No video_files in result for clip {clip_num}')
+                          continue
+                      url = files[0]['link']
+                      w = files[0].get('width', '?')
+                      h = files[0].get('height', '?')
+                      print(f'Clip {clip_num} OK ({w}x{h}): {url[:70]}')
+                      return url
                   except Exception as e:
-                      print(f'JSON parse error: {e}. Body: {resp.text[:300]}')
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+                      print(f'Pexels error clip {clip_num} attempt {attempt+1}: {e}')
+                      continue
+              print(f'ERROR: Could not fetch clip {clip_num} for "{query[:45]}"')
+              return None
 
-                  clip_url = data.get('video_url', '')
-                  if not clip_url:
-                      print(f'No video_url in response: {data}')
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-
-                  print(f'Clip {clip_num} OK in {elapsed}s: {clip_url[:80]}')
-                  set_config('nanobanana_rate_limit_reset', '')  # Clear rate limit flag
-                  return clip_url
-
-              except requests.exceptions.Timeout:
-                  elapsed = int(time.time() - t_start)
-                  print(f'TIMEOUT after {elapsed}s on clip {clip_num} — retry next run')
-                  at_patch(record_id, {'Status': 'clips_rendering'})
-                  sys.exit(0)
-
-              except requests.exceptions.ConnectionError as e:
-                  elapsed = int(time.time() - t_start)
-                  print(f'ConnectionError after {elapsed}s on clip {clip_num}: {str(e)[:300]}')
-                  at_patch(record_id, {'Status': 'clips_rendering'})
-                  sys.exit(0)
-
-              except Exception as e:
-                  print(f'Unexpected {type(e).__name__}: {e}')
-                  at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-
-          # ── Generate all 4 clips sequentially ────────────────────────────────
           clips = []
-          for i, prompt in enumerate(prompts):
-              url = generate_clip(prompt, i + 1)
+          for i, query in enumerate(queries):
+              url = get_pexels_clip(query, i + 1)
+              if not url:
+                  at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
               clips.append(url)
+              time.sleep(0.3)  # Gentle pacing for Pexels API
 
-          print(f'All 4 clips generated: {[c[:50] for c in clips]}')
+          print(f'All 4 clips fetched from Pexels')
 
           # ── Submit 3 JSON2Video renders (A, B, C variants) ────────────────────
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
@@ -264,12 +178,7 @@ jobs:
                       },
                       {'type': 'audio', 'src': audio_url}
                   ],
-                  'scenes': [
-                      make_scene(clips[0]),
-                      make_scene(clips[1]),
-                      make_scene(clips[2]),
-                      make_scene(clips[3])
-                  ]
+                  'scenes': [make_scene(c) for c in clips]
               }
               try:
                   r = requests.post('https://api.json2video.com/v2/movies',
