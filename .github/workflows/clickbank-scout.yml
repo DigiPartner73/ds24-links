@@ -1,86 +1,154 @@
-name: ClickBank Scout
+name: ClickBank Scout (SA-01-CB)
 
 on:
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 5 * * *'   # täglich 05:00 UTC
   workflow_dispatch:
 
 jobs:
   scout:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - name: Fetch ClickBank Top Products and Push to Make.com
+      - name: Run ClickBank Scout
         env:
-          CLICKBANK_AUTH: ${{ secrets.CLICKBANK_AUTH }}
+          CLICKBANK_REFRESH_TOKEN: ${{ secrets.CLICKBANK_REFRESH_TOKEN }}
         run: |
-          node << 'NODEEOF'
+          node <<'SCRIPT'
           const https = require('https');
-          const WEBHOOK = 'https://hook.eu1.make.com/882803j9m5617e1ozp7jhuviicsrpjeb';
 
-          const req = (opts, body) => new Promise((res, rej) => {
-            const r = https.request(opts, resp => {
-              let d = '';
-              resp.on('data', c => d += c);
-              resp.on('end', () => res({ status: resp.statusCode, ct: resp.headers['content-type']||'', body: d }));
-            });
-            r.on('error', rej);
-            if (body) r.write(body);
-            r.end();
-          });
-
-          const sendWebhook = async (data) => {
-            const body = JSON.stringify(data);
-            return req({
-              hostname: 'hook.eu1.make.com',
-              path: '/' + WEBHOOK.split('/').pop(),
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-            }, body);
-          };
-
-          (async () => {
-            const rawKey = process.env.CLICKBANK_AUTH || '';
-            const authHeader = rawKey ? rawKey + ':' : null;
-
-            // Try without auth
-            const r1 = await req({
-              hostname: 'api.clickbank.com',
-              path: '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=5',
-              method: 'GET',
-              headers: Object.assign({ 'Accept': 'application/json' }, authHeader ? { 'Authorization': authHeader } : {})
-            });
-
-            console.log('Status:', r1.status, 'CT:', r1.ct);
-            console.log('Body:', r1.body.slice(0, 300));
-
-            // Send diagnostic to Make.com
-            await sendWebhook({
-              _diagnostic: true,
-              cb_status: r1.status,
-              cb_ct: r1.ct,
-              cb_body: r1.body.slice(0, 500),
-              key_present: !!rawKey,
-              products: []
-            });
-
-            // If successful, parse and send real products
-            if (r1.status === 200 && r1.ct.includes('json')) {
-              const parsed = JSON.parse(r1.body);
-              const raw = parsed.results || parsed.products || parsed.hits || parsed.items || [];
-              if (raw.length) {
-                const products = raw.map(p => ({
-                  site: p.site || p.nickname || '',
-                  title: p.title || p.name || '',
-                  description: p.description || '',
-                  marketplaceStats: {
-                    gravity: parseFloat(p.gravity || 0),
-                    averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || 0),
-                    category: p.category || ''
+          function request(hostname, path, method, headers, body) {
+            return new Promise((resolve, reject) => {
+              const bodyStr = body ? JSON.stringify(body) : '';
+              const req = https.request(
+                {
+                  hostname,
+                  path,
+                  method,
+                  headers: {
+                    ...headers,
+                    ...(bodyStr ? { 'Content-Length': Buffer.byteLength(bodyStr) } : {})
                   }
-                }));
-                await sendWebhook({ products });
-                console.log('Sent', products.length, 'products');
+                },
+                res => {
+                  let data = '';
+                  res.on('data', chunk => data += chunk);
+                  res.on('end', () => {
+                    try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+                    catch { resolve({ status: res.statusCode, body: data }); }
+                  });
+                }
+              );
+              req.on('error', reject);
+              if (bodyStr) req.write(bodyStr);
+              req.end();
+            });
+          }
+
+          async function main() {
+            // Step 1: Cognito REFRESH_TOKEN_AUTH -> new access token
+            console.log('Refreshing Cognito access token...');
+            const authResp = await request(
+              'cognito-idp.us-west-2.amazonaws.com',
+              '/',
+              'POST',
+              {
+                'X-Amz-Target': 'AmazonCognitoIdentityProviderService.InitiateAuth',
+                'Content-Type': 'application/x-amz-json-1.1'
+              },
+              {
+                AuthFlow: 'REFRESH_TOKEN_AUTH',
+                ClientId: '1th5k0a3pnlnpmof3vf8h1bs63',
+                AuthParameters: {
+                  REFRESH_TOKEN: process.env.CLICKBANK_REFRESH_TOKEN
+                }
               }
+            );
+
+            if (authResp.status !== 200 || !authResp.body?.AuthenticationResult?.AccessToken) {
+              throw new Error('Cognito auth failed (' + authResp.status + '): ' + JSON.stringify(authResp.body));
             }
-          })();
-          NODEEOF
+            const accessToken = authResp.body.AuthenticationResult.AccessToken;
+            console.log('New access token received');
+
+            // Step 2: ClickBank GraphQL - top 20 products by rank
+            console.log('Fetching ClickBank marketplace via GraphQL...');
+            const gqlResp = await request(
+              'accounts.clickbank.com',
+              '/graphql',
+              'POST',
+              {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + accessToken
+              },
+              {
+                query: 'query ($parameters: MarketplaceSearchParameters!) { marketplaceSearch(parameters: $parameters) { totalHits hits { site title description marketplaceStats { category gravity averageDollarsPerSale initialDollarsPerSale activateDate } } } }',
+                variables: {
+                  parameters: {
+                    category: null,
+                    sortField: 'rank',
+                    sortDescending: false,
+                    resultsPerPage: 20,
+                    offset: 0,
+                    nicknameMasq: null
+                  }
+                }
+              }
+            );
+
+            if (gqlResp.status !== 200 || (gqlResp.body?.errors && gqlResp.body.errors.length > 0)) {
+              throw new Error('GraphQL failed (' + gqlResp.status + '): ' + JSON.stringify(gqlResp.body?.errors || gqlResp.body));
+            }
+
+            const hits = gqlResp.body?.data?.marketplaceSearch?.hits || [];
+            const totalHits = gqlResp.body?.data?.marketplaceSearch?.totalHits || 0;
+            console.log('Got ' + hits.length + ' products (' + totalHits + ' total in marketplace)');
+
+            if (hits.length === 0) {
+              throw new Error('No products returned from ClickBank GraphQL');
+            }
+
+            // Step 3: Map to Make.com / Airtable format
+            const products = hits.map(h => ({
+              site:                  h.site,
+              title:                 h.title || '',
+              description:           h.description || '',
+              affiliate_link:        'https://digipart73.' + h.site + '.hop.clickbank.net/',
+              gravity:               h.marketplaceStats?.gravity || 0,
+              averageDollarsPerSale: h.marketplaceStats?.averageDollarsPerSale || 0,
+              initialDollarsPerSale: h.marketplaceStats?.initialDollarsPerSale || 0,
+              category:              h.marketplaceStats?.category || '',
+              activateDate:          h.marketplaceStats?.activateDate || '',
+              netzwerk:              'ClickBank'
+            }));
+
+            products.slice(0, 3).forEach((p, i) => {
+              console.log((i+1) + '. [' + p.site + '] ' + p.title.slice(0,50) + ' | gravity: ' + p.gravity.toFixed(1) + ' | avg: $' + p.averageDollarsPerSale.toFixed(2));
+            });
+
+            // Step 4: POST to Make.com SA-01-CB webhook
+            console.log('Sending to Make.com webhook...');
+            const webhookResp = await request(
+              'hook.eu1.make.com',
+              '/882803j9m5617e1ozp7jhuviicsrpjeb',
+              'POST',
+              { 'Content-Type': 'application/json' },
+              { products }
+            );
+
+            console.log('Webhook response: ' + webhookResp.status + ' -> ' + JSON.stringify(webhookResp.body));
+
+            if (webhookResp.status !== 200) {
+              throw new Error('Webhook returned HTTP ' + webhookResp.status);
+            }
+
+            console.log('Done - ' + products.length + ' ClickBank products sent to Make.com');
+          }
+
+          main().catch(e => {
+            console.error('FAILED: ' + e.message);
+            process.exit(1);
+          });
+          SCRIPT
