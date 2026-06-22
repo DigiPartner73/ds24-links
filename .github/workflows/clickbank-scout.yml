@@ -1,0 +1,88 @@
+name: ClickBank Scout
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch ClickBank Top Products and Push to Make.com
+        run: |
+          node << 'NODEEOF'
+          const https = require('https');
+
+          const body = JSON.stringify({
+            query: `query ($parameters: MarketplaceSearchParameters!) {
+              marketplaceSearch(parameters: $parameters) {
+                totalHits
+                hits {
+                  site
+                  title
+                  description
+                  marketplaceStats {
+                    gravity
+                    averageDollarsPerSale
+                    category
+                  }
+                }
+              }
+            }`,
+            variables: {
+              parameters: {
+                sortField: "gravity",
+                sortDescending: true,
+                resultsPerPage: 50,
+                offset: 0,
+                nicknameMasq: null
+              }
+            }
+          });
+
+          const cbOptions = {
+            hostname: 'accounts.clickbank.com',
+            path: '/graphql',
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body)
+            }
+          };
+
+          const cbReq = https.request(cbOptions, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+              const parsed = JSON.parse(data);
+              const products = parsed.data.marketplaceSearch.hits;
+              console.log('Fetched ' + products.length + ' products from ClickBank');
+
+              const payload = JSON.stringify({ products });
+              const makeOptions = {
+                hostname: 'hook.eu1.make.com',
+                path: '/882803j9m5617e1ozp7jhuviicsrpjeb',
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Content-Length': Buffer.byteLength(payload)
+                }
+              };
+
+              const makeReq = https.request(makeOptions, (makeRes) => {
+                let makeData = '';
+                makeRes.on('data', chunk => makeData += chunk);
+                makeRes.on('end', () => {
+                  console.log('Make.com: ' + makeRes.statusCode + ' ' + makeData);
+                });
+              });
+              makeReq.on('error', e => { console.error(e); process.exit(1); });
+              makeReq.write(payload);
+              makeReq.end();
+            });
+          });
+          cbReq.on('error', e => { console.error(e); process.exit(1); });
+          cbReq.write(body);
+          cbReq.end();
+          NODEEOF
