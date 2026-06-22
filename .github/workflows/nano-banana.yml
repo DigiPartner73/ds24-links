@@ -20,7 +20,6 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import requests
-          import json
           import os
           import sys
           import time
@@ -29,235 +28,164 @@ jobs:
           BASE_ID = 'apppfrE10FwXz9IMY'
           TABLE_ID = 'tblm1szgXQZc0mRle'
           CONFIG_TABLE = 'tblHq1P7Z7bE7hUEj'
-
-          AT_HEADERS = {
-              'Authorization': f'Bearer {AT_TOKEN}',
-              'Content-Type': 'application/json'
-          }
+          AT_HEADERS = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
 
           def at_get(table, params):
-              return requests.get(
-                  f'https://api.airtable.com/v0/{BASE_ID}/{table}',
-                  headers=AT_HEADERS, params=params
-              ).json()
+              return requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{table}',
+                  headers=AT_HEADERS, params=params).json()
 
           def at_patch(record_id, fields):
-              return requests.patch(
-                  f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{record_id}',
-                  headers=AT_HEADERS,
-                  json={'fields': fields}
-              ).json()
+              return requests.patch(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{record_id}',
+                  headers=AT_HEADERS, json={'fields': fields}).json()
 
           def get_config(key):
-              resp = at_get(CONFIG_TABLE, {
-                  'filterByFormula': f'{{Parameter}}="{key}"',
-                  'maxRecords': 1
-              })
-              records = resp.get('records', [])
-              return records[0]['fields'].get('Wert', '') if records else ''
+              r = at_get(CONFIG_TABLE, {'filterByFormula': f'{{Parameter}}="{key}"', 'maxRecords': 1})
+              recs = r.get('records', [])
+              return recs[0]['fields'].get('Wert', '') if recs else ''
 
           NB_API_KEY = get_config('nanobanana_api_key')
           J2V_API_KEY = get_config('json2video_api_key')
+          if not NB_API_KEY: print('ERROR: nanobanana_api_key missing'); sys.exit(1)
+          if not J2V_API_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
+          print(f'Keys: NB={NB_API_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
 
-          if not NB_API_KEY:
-              print('ERROR: nanobanana_api_key not found in Config')
-              sys.exit(1)
-          if not J2V_API_KEY:
-              print('ERROR: json2video_api_key not found in Config')
-              sys.exit(1)
-
-          print(f'Keys loaded: NB={NB_API_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
-
-          resp = at_get(TABLE_ID, {
-              'filterByFormula': '{Status}="clips_rendering"',
-              'maxRecords': 1
-          })
+          resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
-
           if not records:
-              print('No clips_rendering records. Nothing to do.')
-              sys.exit(0)
+              print('Nothing to do.'); sys.exit(0)
 
           record = records[0]
           record_id = record['id']
           fields = record['fields']
-          product_name = fields.get('Name') or fields.get('Produkt_Name') or record_id
-          print(f"Processing: {record_id} - {product_name}")
+          print(f"Processing: {record_id}")
 
           at_patch(record_id, {'Status': 'nb_processing'})
 
           vo_a = fields.get('Voiceover_DL_A', '')
           vo_b = fields.get('Voiceover_DL_B', '')
           vo_c = fields.get('Voiceover_DL_C', '')
-
           if not all([vo_a, vo_b, vo_c]):
-              print(f'ERROR: Missing voiceover URLs: A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
-              at_patch(record_id, {'Status': 'fehler_clip'})
-              sys.exit(1)
-
-          print(f'Voiceover URLs OK')
+              print(f'ERROR: Missing voiceover URLs A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
+              at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+          print('Voiceover URLs OK')
 
           base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle scene'
-          suffix = ', cinematic photorealistic scene, 9:16 vertical, smooth camera motion, no face, no text, no watermark'
+          suffix = ', 9:16 vertical video, cinematic, smooth motion, no face, no text'
           prompts = [
               (fields.get('Pexels_Query') or base_q) + suffix,
-              (fields.get('Pexels_Query_2') or base_q + ' close up detail shot') + suffix,
-              (fields.get('Pexels_Query_3') or base_q + ' wide angle establishing shot') + suffix,
+              (fields.get('Pexels_Query_2') or base_q + ' detail') + suffix,
+              (fields.get('Pexels_Query_3') or base_q + ' wide shot') + suffix,
               (fields.get('Pexels_Query_4') or base_q + ' slow motion') + suffix,
           ]
-          print(f'Prompts ready: {[p[:50] for p in prompts]}')
+          print(f'Prompts: {[p[:50] for p in prompts]}')
 
-          NB_HEADERS = {
-              'Authorization': f'Bearer {NB_API_KEY}',
-              'Content-Type': 'application/json'
-          }
+          NB_HEADERS = {'Authorization': f'Bearer {NB_API_KEY}', 'Content-Type': 'application/json'}
 
-          def generate_clip(prompt, clip_num, max_retries=3):
-              for attempt in range(max_retries):
-                  print(f'Clip {clip_num}/4, attempt {attempt+1}/{max_retries}...')
-                  try:
-                      resp = requests.post(
-                          'https://nanobananavideo.com/api/v1/text-to-video.php',
-                          headers=NB_HEADERS,
-                          json={
-                              'prompt': prompt,
-                              'resolution': '720p',
-                              'duration': 5,
-                              'aspect_ratio': '9:16',
-                              'video_model': 'seedance2',
-                              'motion_intensity': 'medium'
-                          },
-                          timeout=300
-                      )
-                      print(f'HTTP {resp.status_code}')
-                      if resp.status_code != 200:
-                          print(f'Error body: {resp.text[:500]}')
-                          if attempt < max_retries - 1:
-                              time.sleep(60)
-                              continue
-                          return None
+          def generate_clip(prompt, clip_num):
+              print(f'Generating clip {clip_num}/4...')
+              try:
+                  resp = requests.post(
+                      'https://nanobananavideo.com/api/v1/text-to-video.php',
+                      headers=NB_HEADERS,
+                      json={
+                          'prompt': prompt,
+                          'resolution': '480p',
+                          'duration': 3,
+                          'aspect_ratio': '9:16',
+                          'video_model': 'seedance2',
+                          'motion_intensity': 'low'
+                      },
+                      timeout=240
+                  )
+                  print(f'HTTP {resp.status_code}')
+
+                  if resp.status_code == 429:
                       data = resp.json()
-                      print(f'Response: {list(data.keys())}')
-                      clip_url = data.get('video_url', '')
-                      if clip_url:
-                          print(f'Clip {clip_num} OK: {clip_url[:60]}...')
-                          return clip_url
-                      else:
-                          print(f'No video_url: {data}')
-                          if attempt < max_retries - 1:
-                              time.sleep(60)
-                              continue
-                  except requests.exceptions.Timeout:
-                      print(f'TIMEOUT (>300s) attempt {attempt+1}')
-                      if attempt < max_retries - 1:
-                          time.sleep(60)
-                          continue
-                  except requests.exceptions.ConnectionError as e:
-                      print(f'ConnectionError attempt {attempt+1}: {e}')
-                      if attempt < max_retries - 1:
-                          time.sleep(30)
-                          continue
-                  except Exception as e:
-                      print(f'Error ({type(e).__name__}) attempt {attempt+1}: {e}')
-                      if attempt < max_retries - 1:
-                          time.sleep(30)
-                          continue
-              return None
+                      reset_secs = data.get('rate_limit', {}).get('reset_in_seconds', 300)
+                      reset_at = data.get('rate_limit', {}).get('reset_at', '?')
+                      print(f'RATE LIMIT! Reset in {reset_secs}s at {reset_at}. Resetting for retry.')
+                      at_patch(record_id, {'Status': 'clips_rendering'})
+                      sys.exit(0)
+
+                  if resp.status_code != 200:
+                      print(f'HTTP error {resp.status_code}: {resp.text[:300]}')
+                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+
+                  data = resp.json()
+                  clip_url = data.get('video_url', '')
+                  if not clip_url:
+                      print(f'No video_url: {data}')
+                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+
+                  print(f'Clip {clip_num} OK: {clip_url[:70]}')
+                  return clip_url
+
+              except requests.exceptions.Timeout:
+                  print(f'TIMEOUT (>240s) on clip {clip_num}. Resetting for retry.')
+                  at_patch(record_id, {'Status': 'clips_rendering'})
+                  sys.exit(0)
+
+              except requests.exceptions.ConnectionError as e:
+                  print(f'ConnectionError clip {clip_num}: {e}')
+                  print('Resetting record for retry by next scheduled run.')
+                  at_patch(record_id, {'Status': 'clips_rendering'})
+                  sys.exit(0)
+
+              except Exception as e:
+                  print(f'Unexpected ({type(e).__name__}): {e}')
+                  at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
 
           clips = []
           for i, prompt in enumerate(prompts):
-              clip_url = generate_clip(prompt, i+1)
-              if not clip_url:
-                  print(f'FATAL: Clip {i+1} failed after all retries')
-                  at_patch(record_id, {'Status': 'fehler_clip'})
-                  sys.exit(1)
-              clips.append(clip_url)
+              url = generate_clip(prompt, i+1)
+              clips.append(url)
 
           print(f'All 4 clips: {clips}')
 
-          J2V_HEADERS = {
-              'x-api-key': J2V_API_KEY,
-              'Content-Type': 'application/json'
-          }
+          J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
           def submit_j2v(audio_url, variant):
-              print(f'Submitting JSON2Video variant {variant}...')
+              print(f'Submitting J2V variant {variant}...')
               body = {
-                  "width": 1080, "height": 1920, "quality": "high",
-                  "elements": [
-                      {
-                          "type": "subtitles",
-                          "language": "de",
-                          "settings": {
-                              "style": "classic",
-                              "font-family": "Montserrat",
-                              "font-size": "80",
-                              "font-weight": "700",
-                              "word-color": "#FFD700",
-                              "line-color": "#FFFFFF",
-                              "outline-color": "#000000",
-                              "outline-width": 6,
-                              "max-words-per-line": 3,
-                              "position": "bottom-center"
-                          }
-                      },
-                      {"type": "audio", "src": audio_url}
+                  'width': 1080, 'height': 1920, 'quality': 'high',
+                  'elements': [
+                      {'type': 'subtitles', 'language': 'de',
+                       'settings': {'style': 'classic', 'font-family': 'Montserrat',
+                           'font-size': '80', 'font-weight': '700',
+                           'word-color': '#FFD700', 'line-color': '#FFFFFF',
+                           'outline-color': '#000000', 'outline-width': 6,
+                           'max-words-per-line': 3, 'position': 'bottom-center'}},
+                      {'type': 'audio', 'src': audio_url}
                   ],
-                  "scenes": [
-                      {
-                          "comment": "Scene 1 - Hook",
-                          "background-color": "#000000",
-                          "duration": -1,
-                          "elements": [{"type": "video", "src": clips[0], "width": 1080, "height": 1920, "x": 0, "y": 0, "loop": -1, "duration": -2}]
-                      },
-                      {
-                          "comment": "Scene 2 - Problem",
-                          "background-color": "#000000",
-                          "duration": -1,
-                          "elements": [{"type": "video", "src": clips[1], "width": 1080, "height": 1920, "x": 0, "y": 0, "loop": -1, "duration": -2}]
-                      },
-                      {
-                          "comment": "Scene 3 - Solution",
-                          "background-color": "#000000",
-                          "duration": -1,
-                          "elements": [{"type": "video", "src": clips[2], "width": 1080, "height": 1920, "x": 0, "y": 0, "loop": -1, "duration": -2}]
-                      },
-                      {
-                          "comment": "Scene 4 - CTA",
-                          "background-color": "#000000",
-                          "duration": -1,
-                          "elements": [{"type": "video", "src": clips[3], "width": 1080, "height": 1920, "x": 0, "y": 0, "loop": -1, "duration": -2}]
-                      }
+                  'scenes': [
+                      {'background-color': '#000000', 'duration': -1,
+                       'elements': [{'type': 'video', 'src': clips[0], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
+                      {'background-color': '#000000', 'duration': -1,
+                       'elements': [{'type': 'video', 'src': clips[1], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
+                      {'background-color': '#000000', 'duration': -1,
+                       'elements': [{'type': 'video', 'src': clips[2], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
+                      {'background-color': '#000000', 'duration': -1,
+                       'elements': [{'type': 'video', 'src': clips[3], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]}
                   ]
               }
-              resp = requests.post(
-                  'https://api.json2video.com/v2/movies',
-                  headers=J2V_HEADERS,
-                  json=body
-              ).json()
-              project_id = resp.get('project', '')
-              print(f'Variant {variant}: project_id={project_id}')
-              return project_id
+              r = requests.post('https://api.json2video.com/v2/movies',
+                  headers=J2V_HEADERS, json=body).json()
+              pid = r.get('project', '')
+              print(f'Variant {variant}: project={pid}')
+              return pid
 
           project_a = submit_j2v(vo_a, 'A')
           project_b = submit_j2v(vo_b, 'B')
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: JSON2Video failed. A={project_a} B={project_b} C={project_c}')
-              at_patch(record_id, {'Status': 'fehler_video'})
-              sys.exit(1)
+              print(f'ERROR: J2V failed. A={project_a} B={project_b} C={project_c}')
+              at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
-          update_fields = {
-              'Status': 'video_rendering',
-              'JSON2Video_ID': project_c
-          }
-          if project_a:
-              update_fields['JSON2Video_ID_A'] = project_a
-          if project_b:
-              update_fields['JSON2Video_ID_B'] = project_b
+          update_fields = {'Status': 'video_rendering', 'JSON2Video_ID': project_c}
+          if project_a: update_fields['JSON2Video_ID_A'] = project_a
+          if project_b: update_fields['JSON2Video_ID_B'] = project_b
 
-          update = at_patch(record_id, update_fields)
-          print(f'Done! Record updated: {update.get("id", "ERROR")}')
-          print(f'J2V IDs: A={project_a} B={project_b} C={project_c}')
+          r = at_patch(record_id, update_fields)
+          print(f'DONE! J2V: A={project_a} B={project_b} C={project_c}')
           PYEOF
