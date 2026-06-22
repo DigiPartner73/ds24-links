@@ -1,0 +1,96 @@
+name: Nano Banana Video Generator
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: nano-banana-generator
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Generate clips and render videos
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests, os, sys
+
+          AT_TOKEN = os.environ['AIRTABLE_TOKEN']
+          BASE_ID = 'apppfrE10FwXz9IMY'
+          TABLE_ID = 'tblm1szgXQZc0mRle'
+          CONFIG_TABLE = 'tblHq1P7Z7bE7hUEj'
+          AT_HEADERS = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
+
+          def at_get(table, params):
+              return requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{table}', headers=AT_HEADERS, params=params).json()
+
+          def at_patch(rid, fields):
+              return requests.patch(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{rid}', headers=AT_HEADERS, json={'fields': fields}).json()
+
+          def get_config(key):
+              r = at_get(CONFIG_TABLE, {'filterByFormula': f'{{Parameter}}="{key}"', 'maxRecords': 1})
+              recs = r.get('records', [])
+              return recs[0]['fields'].get('Wert', '') if recs else ''
+
+          NB_KEY = get_config('nanobanana_api_key')
+          J2V_KEY = get_config('json2video_api_key')
+          if not NB_KEY: print('ERROR: nanobanana_api_key missing'); sys.exit(1)
+          if not J2V_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
+          print('Keys OK')
+
+          r = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
+          recs = r.get('records', [])
+          if not recs: print('Nothing to do.'); sys.exit(0)
+
+          rec = recs[0]; rid = rec['id']; fields = rec['fields']
+          print(f"Processing: {rid} - {fields.get('Name','?')}")
+          at_patch(rid, {'Status': 'nb_processing'})
+
+          vo_a = fields.get('Voiceover_DL_A', '')
+          vo_b = fields.get('Voiceover_DL_B', '')
+          vo_c = fields.get('Voiceover_DL_C', '')
+          if not all([vo_a, vo_b, vo_c]):
+              print(f'ERROR: Missing voiceover DL URLs'); at_patch(rid, {'Status': 'fehler_clip'}); sys.exit(1)
+
+          q = fields.get('Pexels_Query', '')
+          sfx = ', cinematic photorealistic scene, 9:16 vertical, smooth camera motion, no face, no text, no watermark'
+          prompts = [fields.get('Pexels_Query', q)+sfx, fields.get('Pexels_Query_2', q)+sfx,
+                     fields.get('Pexels_Query_3', q)+sfx, fields.get('Pexels_Query_4', q)+sfx]
+
+          NB_H = {'Authorization': f'Bearer {NB_KEY}', 'Content-Type': 'application/json'}
+          clips = []
+          for i, prompt in enumerate(prompts):
+              print(f'Clip {i+1}/4...')
+              try:
+                  d = requests.post('https://nanobananavideo.com/api/v1/text-to-video.php', headers=NB_H,
+                      json={'prompt': prompt, 'resolution': '720p', 'duration': 5, 'aspect_ratio': '9:16', 'video_model': 'seedance2'},
+                      timeout=300).json()
+              except Exception as e:
+                  print(f'ERROR clip {i+1}: {e}'); at_patch(rid, {'Status': 'fehler_clip'}); sys.exit(1)
+              url = d.get('video_url', '')
+              if not url: print(f'ERROR clip {i+1}: {d}'); at_patch(rid, {'Status': 'fehler_clip'}); sys.exit(1)
+              clips.append(url); print(f'Clip {i+1} OK')
+
+          J2V_H = {'x-api-key': J2V_KEY, 'Content-Type': 'application/json'}
+          def j2v(audio):
+              body = {"width":1080,"height":1920,"quality":"high",
+                  "elements":[{"type":"subtitles","language":"de","settings":{"style":"classic","font-family":"Montserrat","font-size":"80","font-weight":"700","word-color":"#FFD700","line-color":"#FFFFFF","outline-color":"#000000","outline-width":6,"max-words-per-line":3,"position":"bottom-center"}},{"type":"audio","src":audio}],
+                  "scenes":[
+                      {"comment":"Scene 1","background-color":"#000000","elements":[{"type":"video","src":clips[0],"width":1080,"height":1920,"x":0,"y":0,"loop":-1,"duration":-2}],"duration":5},
+                      {"comment":"Scene 2","background-color":"#000000","elements":[{"type":"video","src":clips[1],"width":1080,"height":1920,"x":0,"y":0,"loop":-1,"duration":-2}],"duration":10},
+                      {"comment":"Scene 3","background-color":"#000000","elements":[{"type":"video","src":clips[2],"width":1080,"height":1920,"x":0,"y":0,"loop":-1,"duration":-2}],"duration":10},
+                      {"comment":"Scene 4","background-color":"#000000","elements":[{"type":"video","src":clips[3],"width":1080,"height":1920,"x":0,"y":0,"loop":-1,"duration":-2}],"duration":5}]}
+              return requests.post('https://api.json2video.com/v2/movies', headers=J2V_H, json=body).json().get('project','')
+
+          pa = j2v(vo_a); pb = j2v(vo_b); pc = j2v(vo_c)
+          print(f'Projects: A={pa} B={pb} C={pc}')
+          if not pc: print('ERROR: J2V failed'); at_patch(rid, {'Status': 'fehler_video'}); sys.exit(1)
+          r = at_patch(rid, {'Status': 'video_rendering', 'JSON2Video_ID': pc})
+          print(f'Done! Airtable: {r.get("id","ERROR")}')
+          PYEOF
