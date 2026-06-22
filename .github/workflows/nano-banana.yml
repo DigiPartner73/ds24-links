@@ -62,11 +62,9 @@ jobs:
           if not J2V_API_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
           print(f'Keys: NB={NB_API_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
 
-          # RATE LIMIT PRE-CHECK (v2 - TIMEZONE BUG FIXED)
+          # Rate limit pre-check (v2 - TIMEZONE BUG FIXED)
           # NB API returns UTC without TZ suffix e.g. "2026-06-22 19:18:54"
-          # OLD BUG: .replace('Z','+00:00') is no-op -> naive datetime -> TypeError
-          #          -> exception caught -> pre-check bypassed -> 14min wasted credit!
-          # FIX: Explicitly append +00:00 when no TZ info present.
+          # FIX: Detect missing TZ and append +00:00 to avoid TypeError
           RATE_LIMIT_BUFFER_SECS = 120  # 2-min safety margin after NB reset
 
           rate_limit_reset_str = get_config('nanobanana_rate_limit_reset')
@@ -90,17 +88,14 @@ jobs:
                   print('Cannot verify rate limit -> skipping to avoid burned credit.')
                   sys.exit(0)
 
-          # FIND RECORD
+          # Find record to process
           resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
           if not records:
               print('Nothing to do.'); sys.exit(0)
 
-          record = records[0]
-          record_id = record['id']
-          fields = record['fields']
+          record = records[0]; record_id = record['id']; fields = record['fields']
           print(f'Processing: {record_id} ({fields.get("Produktname","?")[:50]})')
-
           at_patch(record_id, {'Status': 'nb_processing'})
 
           vo_a = fields.get('Voiceover_DL_A', '')
@@ -109,10 +104,11 @@ jobs:
           if not all([vo_a, vo_b, vo_c]):
               print(f'ERROR: Missing voiceover URLs A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-          print(f'Voiceover URLs OK: A={vo_a[:60]}...')
+          print(f'Voiceover URLs: A={vo_a[:60]}...')
 
           base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle scene'
-          suffix = ', 9:16 vertical video, cinematic, smooth motion, no face, no text'
+          # NB API: no aspect_ratio param -> embed in prompt. No video_model param (internal).
+          suffix = ', vertical 9:16 portrait video, cinematic, smooth motion, no face, no text, no watermark'
           prompts = [
               (fields.get('Pexels_Query') or base_q) + suffix,
               (fields.get('Pexels_Query_2') or base_q + ' close detail shot') + suffix,
@@ -127,11 +123,15 @@ jobs:
               print(f'[{time.strftime("%H:%M:%S")}] Generating clip {clip_num}/4 (720p, 3s)...')
               t_start = time.time()
               try:
+                  # v3 FIXES:
+                  # 1. Correct endpoint: /api/v1/text-to-video (NOT .php)
+                  # 2. Removed video_model (internal param, not user-facing per NB docs)
+                  # 3. Removed aspect_ratio (not documented, embedded in prompt instead)
+                  # Documented params: prompt, duration (3-12), resolution (720p|1080p)
                   resp = requests.post(
-                      'https://nanobananavideo.com/api/v1/text-to-video.php',
+                      'https://nanobananavideo.com/api/v1/text-to-video',
                       headers=NB_HEADERS,
-                      json={'prompt': prompt, 'resolution': '720p', 'duration': 3,
-                            'aspect_ratio': '9:16', 'video_model': 'seedance2'},
+                      json={'prompt': prompt, 'resolution': '720p', 'duration': 3},
                       timeout=360
                   )
                   elapsed = int(time.time() - t_start)
@@ -144,47 +144,33 @@ jobs:
                       reset_at = rl.get('reset_at', '')
                       reset_secs = rl.get('reset_in_seconds', 1800)
                       print(f'RATE LIMIT on clip {clip_num}: {data.get("error","?")}')
-                      print(f'reset_at="{reset_at}" reset_in_seconds={reset_secs}')
                       if reset_at:
                           set_config('nanobanana_rate_limit_reset', reset_at)
-                          print(f'Saved reset_at: {reset_at}')
                       else:
-                          import datetime as dtm
-                          future = datetime.now(timezone.utc) + dtm.timedelta(seconds=max(reset_secs, 1800))
-                          fb = future.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-                          set_config('nanobanana_rate_limit_reset', fb)
-                          print(f'No reset_at in response -> saved fallback: {fb}')
-                      at_patch(record_id, {'Status': 'clips_rendering'})
-                      sys.exit(0)
+                          import datetime as dt_module
+                          future = datetime.now(timezone.utc) + dt_module.timedelta(seconds=max(reset_secs, 1800))
+                          set_config('nanobanana_rate_limit_reset', future.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
+                      at_patch(record_id, {'Status': 'clips_rendering'}); sys.exit(0)
 
                   if resp.status_code != 200:
                       print(f'HTTP {resp.status_code}: {resp.text[:400]}')
                       at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
 
-                  try: data = resp.json()
-                  except Exception as e:
-                      print(f'JSON parse error: {e}. Body: {resp.text[:200]}')
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-
+                  data = resp.json()
                   clip_url = data.get('video_url', '')
                   if not clip_url:
-                      print(f'No video_url in response: {data}')
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+                      print(f'No video_url: {data}'); at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
 
                   print(f'Clip {clip_num} OK in {elapsed}s: {clip_url[:80]}')
                   set_config('nanobanana_rate_limit_reset', '')
                   return clip_url
 
               except requests.exceptions.Timeout:
-                  elapsed = int(time.time() - t_start)
-                  print(f'TIMEOUT after {elapsed}s on clip {clip_num}')
+                  print(f'TIMEOUT after {int(time.time()-t_start)}s on clip {clip_num}')
                   at_patch(record_id, {'Status': 'clips_rendering'}); sys.exit(0)
-
               except requests.exceptions.ConnectionError as e:
-                  elapsed = int(time.time() - t_start)
-                  print(f'ConnectionError after {elapsed}s: {str(e)[:200]}')
+                  print(f'ConnectionError after {int(time.time()-t_start)}s: {str(e)[:200]}')
                   at_patch(record_id, {'Status': 'clips_rendering'}); sys.exit(0)
-
               except Exception as e:
                   print(f'Unexpected {type(e).__name__}: {e}')
                   at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
@@ -205,8 +191,7 @@ jobs:
 
           def submit_j2v(audio_url, variant):
               print(f'[{time.strftime("%H:%M:%S")}] Submitting J2V variant {variant}...')
-              body = {
-                  'width': 1080, 'height': 1920, 'quality': 'high',
+              body = {'width': 1080, 'height': 1920, 'quality': 'high',
                   'elements': [
                       {'type': 'subtitles', 'language': 'de',
                        'settings': {'style': 'classic', 'font-family': 'Montserrat',
@@ -217,31 +202,26 @@ jobs:
                       {'type': 'audio', 'src': audio_url}
                   ],
                   'scenes': [make_scene(clips[0]), make_scene(clips[1]),
-                             make_scene(clips[2]), make_scene(clips[3])]
-              }
+                             make_scene(clips[2]), make_scene(clips[3])]}
               try:
                   r = requests.post('https://api.json2video.com/v2/movies',
                       headers=J2V_HEADERS, json=body, timeout=30).json()
                   pid = r.get('project', '')
-                  if pid: print(f'Variant {variant}: project_id={pid}')
-                  else: print(f'Variant {variant}: NO project_id! Response: {r}')
+                  print(f'Variant {variant}: project_id={pid}' if pid else f'Variant {variant}: NO project_id! {r}')
                   return pid
               except Exception as e:
-                  print(f'J2V error variant {variant}: {e}'); return ''
+                  print(f'J2V error: {e}'); return ''
 
           project_a = submit_j2v(vo_a, 'A')
           project_b = submit_j2v(vo_b, 'B')
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: J2V failed. A={project_a} B={project_b} C={project_c}')
               at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
           update_fields = {'Status': 'video_rendering', 'JSON2Video_ID': project_c}
           if project_a: update_fields['JSON2Video_ID_A'] = project_a
           if project_b: update_fields['JSON2Video_ID_B'] = project_b
-
           result = at_patch(record_id, update_fields)
-          print(f'SUCCESS! Record={result.get("id","ERROR")} Status=video_rendering')
-          print(f'J2V IDs: A={project_a} B={project_b} C={project_c}')
+          print(f'SUCCESS! Record={result.get("id","ERROR")} J2V: A={project_a} B={project_b} C={project_c}')
           PYEOF
