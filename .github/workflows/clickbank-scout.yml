@@ -9,28 +9,60 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Run ClickBank Scout
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
         run: |
           node <<'SCRIPT'
           const https = require('https');
 
           function request(hostname, path, method, headers, body) {
             return new Promise((resolve, reject) => {
-              const data = JSON.stringify(body);
-              const options = { hostname, path, method, headers: { ...headers, 'Content-Length': Buffer.byteLength(data) } };
+              const data = body ? JSON.stringify(body) : '';
+              const options = {
+                hostname, path, method,
+                headers: { ...headers, 'Content-Length': Buffer.byteLength(data) }
+              };
               const req = https.request(options, res => {
                 let raw = '';
                 res.on('data', c => raw += c);
                 res.on('end', () => resolve({ status: res.statusCode, body: raw }));
               });
               req.on('error', reject);
-              req.write(data);
+              if (data) req.write(data);
               req.end();
             });
           }
 
-          async function main() {
-            console.log('Fetching ClickBank marketplace products...');
+          async function getExistingVendors() {
+            const token = process.env.AIRTABLE_TOKEN;
+            const baseId = 'apppfrE10FwXz9IMY';
+            const tableId = 'tblm1szgXQZc0mRle';
+            const vendors = new Set();
+            let offset = '';
+            do {
+              const offsetParam = offset ? `&offset=${offset}` : '';
+              const path = `/v0/${baseId}/${tableId}?fields%5B%5D=Vendor&filterByFormula=${encodeURIComponent("{Plattform}='ClickBank'")}${offsetParam}`;
+              const resp = await request('api.airtable.com', path, 'GET', {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              }, null);
+              const data = JSON.parse(resp.body);
+              (data.records || []).forEach(r => {
+                if (r.fields.Vendor) vendors.add(r.fields.Vendor);
+              });
+              offset = data.offset || '';
+            } while (offset);
+            return vendors;
+          }
 
+          async function main() {
+            // Step 1: Bestehende ClickBank-Vendor-IDs aus Airtable holen
+            console.log('Loading existing ClickBank vendors from Airtable...');
+            const existingVendors = await getExistingVendors();
+            console.log(`Found ${existingVendors.size} existing vendors: ${[...existingVendors].join(', ')}`);
+
+            // Step 2: Top ClickBank-Produkte per GraphQL holen
+            console.log('Fetching ClickBank marketplace products...');
             const gqlResp = await request(
               'accounts.clickbank.com', '/graphql', 'POST',
               {
@@ -69,59 +101,39 @@ jobs:
               }
             );
 
-            if (gqlResp.status !== 200) {
-              throw new Error(`GraphQL failed (${gqlResp.status}): ${gqlResp.body}`);
-            }
-
+            if (gqlResp.status !== 200) throw new Error(`GraphQL failed (${gqlResp.status}): ${gqlResp.body}`);
             const gqlData = JSON.parse(gqlResp.body);
-            if (gqlData.errors) {
-              throw new Error('GraphQL errors: ' + JSON.stringify(gqlData.errors));
-            }
+            if (gqlData.errors) throw new Error('GraphQL errors: ' + JSON.stringify(gqlData.errors));
 
             const hits = gqlData.data.marketplaceSearch.hits || [];
-            console.log(`Found ${gqlData.data.marketplaceSearch.totalHits} total, fetched ${hits.length}`);
+            console.log(`Fetched ${hits.length} products (total in CB: ${gqlData.data.marketplaceSearch.totalHits})`);
 
-            // Filter: gravity >= 10 and EPS >= 20
-            const filtered = hits.filter(h => {
+            // Step 3: Qualitätsfilter + Dedup gegen Airtable
+            const newProducts = hits.filter(h => {
               const stats = h.marketplaceStats || {};
-              return (stats.gravity || 0) >= 10 && (stats.averageDollarsPerSale || 0) >= 20;
+              const qualityOk = (stats.gravity || 0) >= 10 && (stats.averageDollarsPerSale || 0) >= 20;
+              const isNew = !existingVendors.has(h.site);
+              return qualityOk && isNew;
             });
-            console.log(`After filter (gravity>=10, EPS>=20): ${filtered.length} products`);
+            console.log(`New products (quality filter + dedup): ${newProducts.length}`);
 
-            const products = filtered.map(h => {
-              const stats = h.marketplaceStats || {};
-              return {
-                vendor_id: h.site || '',
-                title: h.title || '',
-                description: (h.description || '').slice(0, 500),
-                niche: stats.category || '',
-                gravity: Math.round((stats.gravity || 0) * 100) / 100,
-                earnings_per_sale: Math.round((stats.averageDollarsPerSale || 0) * 100) / 100,
-                initial_dollars_per_sale: Math.round((stats.initialDollarsPerSale || 0) * 100) / 100,
-                activate_date: stats.activateDate || '',
-                network: 'ClickBank',
-                affiliate_url: `https://${h.site}.hop.clickbank.net`
-              };
-            });
-
-            if (products.length === 0) {
-              console.log('No products passed filter — skipping webhook.');
+            if (newProducts.length === 0) {
+              console.log('No new products — skipping webhook.');
               return;
             }
 
+            // Step 4: Im GraphQL-Format an Make.com schicken ({{5.site}}, {{5.marketplaceStats.gravity}} etc.)
             const webhookResp = await request(
               'hook.eu1.make.com',
               '/882803j9m5617e1ozp7jhuviicsrpjeb',
               'POST',
               { 'Content-Type': 'application/json' },
-              { products }
+              { products: newProducts }
             );
 
-            console.log(`Webhook response: ${webhookResp.status} ${webhookResp.body}`);
-            if (webhookResp.status < 200 || webhookResp.status >= 300) {
-              throw new Error(`Webhook failed: ${webhookResp.status}`);
-            }
-            console.log(`SUCCESS: ${products.length} products sent to Make.com`);
+            console.log(`Webhook: ${webhookResp.status} ${webhookResp.body}`);
+            if (webhookResp.status < 200 || webhookResp.status >= 300) throw new Error(`Webhook failed: ${webhookResp.status}`);
+            console.log(`SUCCESS: ${newProducts.length} new products sent to Make.com`);
           }
 
           main().catch(err => { console.error('FAILED:', err.message); process.exit(1); });
