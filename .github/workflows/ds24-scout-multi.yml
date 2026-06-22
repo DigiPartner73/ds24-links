@@ -46,8 +46,6 @@ jobs:
               print('FEHLER: MAKE_DS24_MULTI_WEBHOOK Secret ist nicht gesetzt!')
               sys.exit(1)
 
-          # Bug #73: DS24 language-Parameter nicht unterstuetzt -> HTTP 500 (wie categoryId/sortBy)
-          # Einmaliger Abruf ohne language, Spracherkennung aus Produktdaten
           DS24_API = 'https://www.digistore24-app.com/v2/api/marketplace/results'
 
           HEADERS = {
@@ -63,31 +61,54 @@ jobs:
           def extract_products(data):
               products = []
               candidates = []
-              if isinstance(data, list):
-                  candidates = [data]
-              elif isinstance(data, dict):
-                  for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
-                      val = data.get(key)
-                      if isinstance(val, list):
-                          candidates.append(val)
-                      elif isinstance(val, dict):
-                          for subkey in ['products', 'results', 'items']:
-                              subval = val.get(subkey)
-                              if isinstance(subval, list):
-                                  candidates.append(subval)
+
+              # DS24-spezifische Struktur: data['result']['items'] (bekannt aus Debug-Run)
+              if isinstance(data, dict) and isinstance(data.get('result'), dict):
+                  items = data['result'].get('items')
+                  if isinstance(items, list):
+                      candidates.append(items)
+                      print(f'[DEBUG] Gefunden: result.items Liste[{len(items)}]')
+
+              # Generische Fallback-Suche
+              if not candidates:
+                  if isinstance(data, list):
+                      candidates = [data]
+                  elif isinstance(data, dict):
+                      for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
+                          val = data.get(key)
+                          if isinstance(val, list):
+                              candidates.append(val)
+                          elif isinstance(val, dict):
+                              for subkey in ['products', 'results', 'items']:
+                                  subval = val.get(subkey)
+                                  if isinstance(subval, list):
+                                      candidates.append(subval)
+
               for candidate in candidates:
                   if not candidate:
                       continue
+                  # Ersten Item-Keys ausgeben (einmalig)
+                  if candidate and isinstance(candidate[0], dict):
+                      print(f'[DEBUG] Item[0] alle Keys: {list(candidate[0].keys())}')
+                      # Werte der wichtigsten Felder zeigen
+                      for k in ['id', 'name', 'title', 'product_id', 'productId', 'earnings_per_sale',
+                                'earningsPerSale', 'commission', 'commission_percent', 'language',
+                                'lang', 'category', 'vendor_name', 'vendorName', 'price']:
+                          if k in candidate[0]:
+                              print(f'[DEBUG] Item[0].{k} = {str(candidate[0][k])[:100]}')
+
                   for item in candidate:
                       if not isinstance(item, dict):
                           continue
                       product_id = (
                           item.get('id') or item.get('product_id') or
-                          item.get('productId') or item.get('offer_id') or ''
+                          item.get('productId') or item.get('offer_id') or
+                          item.get('offerId') or ''
                       )
                       name = (
                           item.get('name') or item.get('title') or
-                          item.get('product_name') or item.get('productName') or ''
+                          item.get('product_name') or item.get('productName') or
+                          item.get('offer_name') or item.get('vendorName') or ''
                       )
                       earnings = (
                           item.get('earnings_per_sale') or item.get('earningsPerSale') or
@@ -99,7 +120,7 @@ jobs:
                       )
                       category = (
                           item.get('category') or item.get('category_name') or
-                          item.get('categoryName') or ''
+                          item.get('categoryName') or item.get('type') or ''
                       )
                       lang_raw = str(
                           item.get('language') or item.get('lang') or
@@ -125,7 +146,7 @@ jobs:
                   return None
 
           print('=== DS24 Scout SA-01-DS24-Multi gestartet ===')
-          print('Fix Bug #73: kein language-Parameter, einmaliger API-Abruf\n')
+          print('Fix Bug #73 + Fix result.items Extraktion\n')
 
           params = {'page': 1, 'per_page': 80}
 
@@ -138,7 +159,7 @@ jobs:
           print(f'HTTP Status: {response.status_code}')
 
           if response.status_code == 403:
-              print('FEHLER: Session-Cookie abgelaufen! DS24_COOKIE erneuern.')
+              print('FEHLER: Session-Cookie abgelaufen!')
               sys.exit(1)
 
           if response.status_code != 200:
@@ -151,27 +172,21 @@ jobs:
               print(f'FEHLER: Kein JSON: {response.text[:200]}')
               sys.exit(1)
 
-          # Debug: API-Struktur analysieren
           if isinstance(data, dict):
               print(f'[DEBUG] Top-Level Keys: {list(data.keys())}')
               for key, val in data.items():
-                  if isinstance(val, list):
-                      print(f'[DEBUG] {key}: Liste[{len(val)}]')
-                      if val and isinstance(val[0], dict):
-                          print(f'[DEBUG] {key}[0] Keys: {list(val[0].keys())}')
-                  elif isinstance(val, (int, str, float, bool)):
-                      print(f'[DEBUG] {key}: {val}')
-          elif isinstance(data, list):
-              print(f'[DEBUG] Root-Array: {len(data)} Eintraege')
-              if data and isinstance(data[0], dict):
-                  print(f'[DEBUG] [0] Keys: {list(data[0].keys())}')
+                  if isinstance(val, (list, dict)):
+                      size = len(val)
+                      print(f'[DEBUG] {key}: {type(val).__name__}[{size}]')
+                      if isinstance(val, dict):
+                          print(f'[DEBUG] {key} sub-keys: {list(val.keys())[:10]}')
 
           products = extract_products(data)
           print(f'\nGefundene Produkte: {len(products)}')
 
           if not products:
               print('FEHLER: Keine Produkte extrahiert.')
-              print(f'Response (erste 1000 Zeichen): {response.text[:1000]}')
+              print(f'Response (erste 2000 Zeichen): {response.text[:2000]}')
               sys.exit(1)
 
           products.sort(
@@ -194,7 +209,7 @@ jobs:
                   'kategorie': product['category'],
                   'sprache': product['lang'],
               }
-              print(f'  POST -> {product["name"][:50]} | Earnings: {product["earnings"]} | Lang: {product["lang"]}')
+              print(f'  POST -> {product["name"][:50]} | {product["earnings"]} | {product["lang"]}')
               result = post_to_webhook(payload)
               if result is not None:
                   total_posted += 1
