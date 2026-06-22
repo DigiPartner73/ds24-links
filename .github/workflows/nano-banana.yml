@@ -24,12 +24,12 @@ jobs:
           import sys
           import time
 
-          # ── v5: Pexels stock videos instead of NB API ────────────────────────
-          # Root cause analysis: NB API holds connections for ~375s then returns 429.
-          # This happens on every single run regardless of rate limit resets.
-          # NB is too slow/overloaded for our use case (4 clips × 375s = 25 min/product).
-          # Pexels: free, instant (<1s per clip), reliable, no rate limits for our volume.
-          # Pexels video files are direct CDN links — JSON2Video downloads & renders them.
+          FALLBACK_CLIPS = [
+              'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4',
+              'https://videos.pexels.com/video-files/6115070/6115070-hd_720_1366_25fps.mp4',
+              'https://videos.pexels.com/video-files/7010338/7010338-uhd_2160_3840_24fps.mp4',
+              'https://videos.pexels.com/video-files/8231583/8231583-uhd_2160_4096_25fps.mp4',
+          ]
 
           AT_TOKEN = os.environ['AIRTABLE_TOKEN']
           BASE_ID = 'apppfrE10FwXz9IMY'
@@ -51,95 +51,100 @@ jobs:
               recs = r.get('records', [])
               return recs[0]['fields'].get('Wert', '') if recs else ''
 
+          def ensure_dl_url(dropbox_url):
+              if not dropbox_url or 'dropbox.com' not in dropbox_url:
+                  return dropbox_url
+              if 'dl=1' in dropbox_url:
+                  return dropbox_url
+              if 'dl=0' in dropbox_url:
+                  return dropbox_url.replace('dl=0', 'dl=1')
+              sep = '&' if '?' in dropbox_url else '?'
+              return dropbox_url + sep + 'dl=1'
+
           PEXELS_KEY = get_config('pexels_api_key')
           J2V_API_KEY = get_config('json2video_api_key')
-          if not PEXELS_KEY: print('ERROR: pexels_api_key missing'); sys.exit(1)
-          if not J2V_API_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
-          print(f'Keys loaded: Pexels={PEXELS_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
-          print(f'Engine: Pexels stock videos (v5)')
+          if not J2V_API_KEY:
+              print('ERROR: json2video_api_key missing from Airtable Config')
+              sys.exit(1)
 
-          # ── Find record to process ────────────────────────────────────────────
+          if PEXELS_KEY:
+              print(f'Pexels API key found ({PEXELS_KEY[:8]}...) - using Pexels API (v6)')
+          else:
+              print('No pexels_api_key in Config - using 4 hardcoded CDN fallback clips (v6)')
+          print(f'J2V key: {J2V_API_KEY[:8]}...')
+
           resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
           if not records:
-              print('Nothing to do.'); sys.exit(0)
+              print('Nothing to do - no clips_rendering records.'); sys.exit(0)
 
           record = records[0]
           record_id = record['id']
           fields = record['fields']
           print(f'Processing: {record_id} ({fields.get("Produktname","?")[:50]})')
 
-          # Lock immediately to prevent concurrent processing
           at_patch(record_id, {'Status': 'nb_processing'})
 
-          vo_a = fields.get('Voiceover_DL_A', '')
-          vo_b = fields.get('Voiceover_DL_B', '')
-          vo_c = fields.get('Voiceover_DL_C', '')
+          vo_a = ensure_dl_url(fields.get('Voiceover_DL_A', ''))
+          vo_b = ensure_dl_url(fields.get('Voiceover_DL_B', ''))
+          vo_c = ensure_dl_url(fields.get('Voiceover_DL_C', ''))
           if not all([vo_a, vo_b, vo_c]):
-              print(f'ERROR: Missing voiceover DL URLs A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
+              print(f'ERROR: Missing Voiceover_DL URLs - A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-          print(f'Voiceover DL URLs OK')
+          print(f'Voiceover DL URLs: A={vo_a[:60]} ...')
 
-          base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
-          queries = [
-              fields.get('Pexels_Query') or base_q,
-              fields.get('Pexels_Query_2') or (base_q + ' close detail'),
-              fields.get('Pexels_Query_3') or (base_q + ' wide shot'),
-              fields.get('Pexels_Query_4') or (base_q + ' slow motion'),
-          ]
-          print(f'Queries: {[q[:55] for q in queries]}')
+          if PEXELS_KEY:
+              base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
+              queries = [
+                  fields.get('Pexels_Query') or base_q,
+                  fields.get('Pexels_Query_2') or (base_q + ' close detail'),
+                  fields.get('Pexels_Query_3') or (base_q + ' wide shot'),
+                  fields.get('Pexels_Query_4') or (base_q + ' slow motion'),
+              ]
+              print(f'Queries: {[q[:45] for q in queries]}')
+              PEXELS_HEADERS = {'Authorization': PEXELS_KEY}
 
-          # ── Pexels video fetch ────────────────────────────────────────────────
-          # Authorization: Raw key, NO "Bearer" prefix (Bug #3 in preferences)
-          PEXELS_HEADERS = {'Authorization': PEXELS_KEY}
+              def get_pexels_clip(query, clip_num):
+                  print(f'[{time.strftime("%H:%M:%S")}] Clip {clip_num}/4: "{query[:45]}"...')
+                  for attempt, params in enumerate([
+                      {'query': query, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
+                      {'query': query.split(',')[0].strip(), 'per_page': 5},
+                  ]):
+                      try:
+                          r = requests.get('https://api.pexels.com/videos/search',
+                              headers=PEXELS_HEADERS, params=params, timeout=15)
+                          if r.status_code != 200:
+                              print(f'  Pexels HTTP {r.status_code}: {r.text[:100]}')
+                              continue
+                          videos = r.json().get('videos', [])
+                          if not videos:
+                              print(f'  No results (attempt {attempt+1})')
+                              continue
+                          video = videos[0]
+                          files = sorted(video.get('video_files', []),
+                                         key=lambda f: f.get('height', 0), reverse=True)
+                          if not files: continue
+                          url = files[0]['link']
+                          w, h = files[0].get('width','?'), files[0].get('height','?')
+                          print(f'  Clip {clip_num} OK ({w}x{h})')
+                          return url
+                      except Exception as e:
+                          print(f'  Error attempt {attempt+1}: {e}')
+                  print(f'  ERROR: Could not fetch clip {clip_num}')
+                  return None
 
-          def get_pexels_clip(query, clip_num):
-              print(f'[{time.strftime("%H:%M:%S")}] Clip {clip_num}/4: Pexels "{query[:45]}"...')
-              # Attempt 1: portrait orientation, large size
-              # Attempt 2: fallback without orientation (broader results)
-              for attempt, params in enumerate([
-                  {'query': query, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
-                  {'query': query.split(',')[0].strip(), 'per_page': 5},
-              ]):
-                  try:
-                      r = requests.get('https://api.pexels.com/videos/search',
-                          headers=PEXELS_HEADERS, params=params, timeout=15)
-                      if r.status_code != 200:
-                          print(f'Pexels HTTP {r.status_code} attempt {attempt+1}: {r.text[:150]}')
-                          continue
-                      videos = r.json().get('videos', [])
-                      if not videos:
-                          print(f'No results attempt {attempt+1} for "{params["query"][:40]}"')
-                          continue
-                      # Prefer highest resolution file (largest height)
-                      video = videos[0]
-                      files = sorted(video.get('video_files', []),
-                                     key=lambda f: f.get('height', 0), reverse=True)
-                      if not files:
-                          print(f'No video_files in result for clip {clip_num}')
-                          continue
-                      url = files[0]['link']
-                      w = files[0].get('width', '?')
-                      h = files[0].get('height', '?')
-                      print(f'Clip {clip_num} OK ({w}x{h}): {url[:70]}')
-                      return url
-                  except Exception as e:
-                      print(f'Pexels error clip {clip_num} attempt {attempt+1}: {e}')
-                      continue
-              print(f'ERROR: Could not fetch clip {clip_num} for "{query[:45]}"')
-              return None
+              clips = []
+              for i, query in enumerate(queries):
+                  url = get_pexels_clip(query, i + 1)
+                  if not url:
+                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
+                  clips.append(url)
+                  time.sleep(0.3)
+              print(f'All 4 clips fetched from Pexels API')
+          else:
+              clips = FALLBACK_CLIPS
+              print(f'Using 4 fallback CDN clips (add pexels_api_key to Config for product-specific videos)')
 
-          clips = []
-          for i, query in enumerate(queries):
-              url = get_pexels_clip(query, i + 1)
-              if not url:
-                  at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-              clips.append(url)
-              time.sleep(0.3)  # Gentle pacing for Pexels API
-
-          print(f'All 4 clips fetched from Pexels')
-
-          # ── Submit 3 JSON2Video renders (A, B, C variants) ────────────────────
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
           def make_scene(clip_url):
@@ -185,12 +190,12 @@ jobs:
                       headers=J2V_HEADERS, json=body, timeout=30).json()
                   pid = r.get('project', '')
                   if pid:
-                      print(f'Variant {variant}: project_id={pid}')
+                      print(f'  Variant {variant}: project_id={pid}')
                   else:
-                      print(f'Variant {variant}: NO project_id! Response: {r}')
+                      print(f'  Variant {variant}: NO project_id! Response: {r}')
                   return pid
               except Exception as e:
-                  print(f'J2V submit error variant {variant}: {e}')
+                  print(f'  J2V submit error variant {variant}: {e}')
                   return ''
 
           project_a = submit_j2v(vo_a, 'A')
@@ -198,20 +203,17 @@ jobs:
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: J2V submission failed. A={project_a} B={project_b} C={project_c}')
+              print(f'ERROR: J2V failed - A={project_a} B={project_b} C={project_c}')
               at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
           update_fields = {
               'Status': 'video_rendering',
               'JSON2Video_ID': project_c,
           }
-          if project_a:
-              update_fields['JSON2Video_ID_A'] = project_a
-          if project_b:
-              update_fields['JSON2Video_ID_B'] = project_b
+          if project_a: update_fields['JSON2Video_ID_A'] = project_a
+          if project_b: update_fields['JSON2Video_ID_B'] = project_b
 
           result = at_patch(record_id, update_fields)
-          rec_id_out = result.get('id', 'ERROR')
-          print(f'SUCCESS! Record={rec_id_out} Status=video_rendering')
+          print(f'SUCCESS! Record={result.get("id","?")} Status=video_rendering')
           print(f'J2V IDs: A={project_a} B={project_b} C={project_c}')
           PYEOF
