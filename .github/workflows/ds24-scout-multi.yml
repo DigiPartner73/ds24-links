@@ -1,0 +1,206 @@
+name: DS24 Scout Multilingual (SA-01-DS24-Multi)
+
+on:
+  schedule:
+    - cron: '30 5 * * *'   # täglich 05:30 UTC (30 Min nach CB Scout)
+  workflow_dispatch:
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run DS24 Multilingual Scout
+        env:
+          DS24_COOKIE: ${{ secrets.DS24_COOKIE }}
+          DS24_AFFILIATE_NICK: ${{ secrets.DS24_AFFILIATE_NICK }}
+          MAKE_DS24_MULTI_WEBHOOK: ${{ secrets.MAKE_DS24_MULTI_WEBHOOK }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import json
+          import time
+          import os
+          import sys
+
+          # ─── Konfiguration ─────────────────────────────────────────────────
+          DS24_COOKIE       = os.environ.get('DS24_COOKIE', '')
+          AFFILIATE_NICK    = os.environ.get('DS24_AFFILIATE_NICK', '')
+          WEBHOOK           = os.environ.get('MAKE_DS24_MULTI_WEBHOOK', '')
+
+          if not DS24_COOKIE:
+              print('FEHLER: DS24_COOKIE Secret ist nicht gesetzt!')
+              sys.exit(1)
+          if not AFFILIATE_NICK:
+              print('FEHLER: DS24_AFFILIATE_NICK Secret ist nicht gesetzt!')
+              sys.exit(1)
+          if not WEBHOOK:
+              print('FEHLER: MAKE_DS24_MULTI_WEBHOOK Secret ist nicht gesetzt!')
+              sys.exit(1)
+
+          # Nur nicht-deutsche Sprachen (DE wird von SA-01 v2 abgedeckt)
+          LANGUAGES = ['en', 'es', 'pt', 'fr', 'it']
+
+          DS24_API = 'https://www.digistore24-app.com/v2/api/marketplace/results'
+
+          HEADERS = {
+              'Cookie': f'ds24={DS24_COOKIE}',
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Referer': 'https://www.digistore24-app.com/',
+          }
+
+          def build_affiliate_link(product_id):
+              return f'https://www.digistore24.com/redir/{product_id}/{AFFILIATE_NICK}/'
+
+          def extract_products(data, language):
+              products = []
+              candidates = []
+              if isinstance(data, list):
+                  candidates = [data]
+              elif isinstance(data, dict):
+                  for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
+                      val = data.get(key)
+                      if isinstance(val, list):
+                          candidates.append(val)
+                      elif isinstance(val, dict):
+                          for subkey in ['products', 'results', 'items']:
+                              subval = val.get(subkey)
+                              if isinstance(subval, list):
+                                  candidates.append(subval)
+
+              for candidate in candidates:
+                  if not candidate:
+                      continue
+                  for item in candidate:
+                      if not isinstance(item, dict):
+                          continue
+                      product_id = (
+                          item.get('id') or item.get('product_id') or
+                          item.get('productId') or item.get('offer_id') or
+                          item.get('offerId') or ''
+                      )
+                      name = (
+                          item.get('name') or item.get('title') or
+                          item.get('product_name') or item.get('productName') or
+                          item.get('offer_name') or ''
+                      )
+                      earnings = (
+                          item.get('earnings_per_sale') or item.get('earningsPerSale') or
+                          item.get('commission') or item.get('commission_per_sale') or
+                          item.get('affiliate_commission') or item.get('price') or 0
+                      )
+                      commission_pct = (
+                          item.get('commission_percent') or item.get('commissionPercent') or
+                          item.get('commission_rate') or item.get('affiliate_commission_percent') or ''
+                      )
+                      category = (
+                          item.get('category') or item.get('category_name') or
+                          item.get('categoryName') or item.get('niche') or ''
+                      )
+                      if product_id and name:
+                          products.append({
+                              'id': str(product_id), 'name': str(name),
+                              'earnings': earnings, 'commission_pct': str(commission_pct),
+                              'category': str(category),
+                          })
+                  if products:
+                      break
+              return products
+
+          def post_to_webhook(payload):
+              try:
+                  res = requests.post(
+                      WEBHOOK, json=payload,
+                      headers={'Content-Type': 'application/json'}, timeout=15,
+                  )
+                  return res.text
+              except Exception as e:
+                  print(f'  Webhook-Fehler: {e}')
+                  return None
+
+          print('=== DS24 Multilingual Scout SA-01-DS24-Multi gestartet ===')
+          print(f'Sprachen: {", ".join(LANGUAGES)}\n')
+
+          total_posted = 0
+          first_language = True
+
+          for lang in LANGUAGES:
+              print(f'\n--- Sprache: {lang.upper()} ---')
+              params = {'language': lang, 'page': 1, 'per_page': 50}
+
+              try:
+                  response = requests.get(DS24_API, params=params, headers=HEADERS, timeout=20)
+              except Exception as e:
+                  print(f'  HTTP-Fehler: {e}')
+                  continue
+
+              print(f'  HTTP Status: {response.status_code}')
+
+              if response.status_code == 403:
+                  print('  FEHLER: Session-Cookie abgelaufen!')
+                  sys.exit(1)
+
+              if response.status_code != 200:
+                  print(f'  WARNUNG: Status {response.status_code}: {response.text[:200]}')
+                  continue
+
+              try:
+                  data = response.json()
+              except Exception:
+                  print(f'  FEHLER: Kein JSON: {response.text[:200]}')
+                  continue
+
+              if first_language:
+                  if isinstance(data, dict):
+                      print(f'  [DEBUG] Keys: {list(data.keys())}')
+                  elif isinstance(data, list):
+                      print(f'  [DEBUG] Array[{len(data)}]')
+                  first_language = False
+
+              products = extract_products(data, lang)
+              print(f'  Gefundene Produkte: {len(products)}')
+
+              if not products:
+                  print('  WARNUNG: Keine Produkte extrahiert.')
+                  continue
+
+              products.sort(
+                  key=lambda p: float(str(p['earnings']).replace(',', '.').replace('€', '').strip() or 0),
+                  reverse=True
+              )
+
+              for product in products[:20]:
+                  affiliate_link = build_affiliate_link(product['id'])
+                  payload = {
+                      'plattform':      'Digistore24',
+                      'produkt_name':   product['name'],
+                      'affiliate_link': affiliate_link,
+                      'produkt_id':     product['id'],
+                      'earnings':       str(product['earnings']),
+                      'commission_pct': product['commission_pct'],
+                      'kategorie':      product['category'],
+                      'sprache':        lang.upper(),
+                  }
+                  print(f'  POST -> {product["name"][:50]} | Earnings: {product["earnings"]}')
+                  result = post_to_webhook(payload)
+                  if result is not None:
+                      total_posted += 1
+                  time.sleep(0.8)
+
+              time.sleep(3)
+
+          print(f'\n=== Scout abgeschlossen: {total_posted} Produkte gepostet ===')
+          if total_posted == 0:
+              print('WARNUNG: 0 Produkte gepostet!')
+              sys.exit(1)
+          PYEOF
