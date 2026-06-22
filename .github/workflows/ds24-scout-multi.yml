@@ -2,7 +2,7 @@ name: DS24 Scout Multilingual (SA-01-DS24-Multi)
 
 on:
   schedule:
-    - cron: '30 5 * * *'  # täglich 05:30 UTC (30 Min nach CB Scout)
+    - cron: '30 5 * * *' # täglich 05:30 UTC (30 Min nach CB Scout)
   workflow_dispatch:
 
 jobs:
@@ -62,14 +62,12 @@ jobs:
               products = []
               candidates = []
 
-              # DS24-spezifische Struktur: data['result']['items'] (bekannt aus Debug-Run)
               if isinstance(data, dict) and isinstance(data.get('result'), dict):
                   items = data['result'].get('items')
                   if isinstance(items, list):
                       candidates.append(items)
                       print(f'[DEBUG] Gefunden: result.items Liste[{len(items)}]')
 
-              # Generische Fallback-Suche
               if not candidates:
                   if isinstance(data, list):
                       candidates = [data]
@@ -87,13 +85,9 @@ jobs:
               for candidate in candidates:
                   if not candidate:
                       continue
-                  # Ersten Item-Keys ausgeben (einmalig)
                   if candidate and isinstance(candidate[0], dict):
                       print(f'[DEBUG] Item[0] alle Keys: {list(candidate[0].keys())}')
-                      # Werte der wichtigsten Felder zeigen
-                      for k in ['id', 'name', 'title', 'product_id', 'productId', 'earnings_per_sale',
-                                'earningsPerSale', 'commission', 'commission_percent', 'language',
-                                'lang', 'category', 'vendor_name', 'vendorName', 'price']:
+                      for k in ['id', 'label', 'vendorName', 'earningsPerSale', 'commission', 'commissionFix']:
                           if k in candidate[0]:
                               print(f'[DEBUG] Item[0].{k} = {str(candidate[0][k])[:100]}')
 
@@ -105,16 +99,21 @@ jobs:
                           item.get('productId') or item.get('offer_id') or
                           item.get('offerId') or ''
                       )
+                      # FIX Bug #73: label-Feld ZUERST verwenden (ist der echte Produktname in DS24)
                       name = (
+                          item.get('label') or
                           item.get('name') or item.get('title') or
                           item.get('product_name') or item.get('productName') or
                           item.get('offer_name') or item.get('vendorName') or ''
                       )
                       earnings = (
-                          item.get('earnings_per_sale') or item.get('earningsPerSale') or
-                          item.get('commission') or item.get('price') or 0
+                          item.get('earningsPerSale') or
+                          item.get('earnings_per_sale') or
+                          item.get('price') or 0
                       )
+                      # FIX: DS24 verwendet 'commission' als Provisions-Prozent
                       commission_pct = (
+                          item.get('commission') or
                           item.get('commission_percent') or item.get('commissionPercent') or
                           item.get('commission_rate') or ''
                       )
@@ -122,10 +121,8 @@ jobs:
                           item.get('category') or item.get('category_name') or
                           item.get('categoryName') or item.get('type') or ''
                       )
-                      lang_raw = str(
-                          item.get('language') or item.get('lang') or
-                          item.get('locale') or 'DE'
-                      ).upper()[:2]
+                      # DS24 hat kein Sprach-Feld - immer DE (Marketplace ist DE-basiert)
+                      lang_raw = 'DE'
                       if product_id and name:
                           products.append({
                               'id': str(product_id), 'name': str(name),
@@ -146,7 +143,7 @@ jobs:
                   return None
 
           print('=== DS24 Scout SA-01-DS24-Multi gestartet ===')
-          print('Fix Bug #73 + Fix result.items Extraktion\n')
+          print('Fix: label-Feld als Produktname, commission als Provisions-Prozent\n')
 
           params = {'page': 1, 'per_page': 80}
 
@@ -174,12 +171,6 @@ jobs:
 
           if isinstance(data, dict):
               print(f'[DEBUG] Top-Level Keys: {list(data.keys())}')
-              for key, val in data.items():
-                  if isinstance(val, (list, dict)):
-                      size = len(val)
-                      print(f'[DEBUG] {key}: {type(val).__name__}[{size}]')
-                      if isinstance(val, dict):
-                          print(f'[DEBUG] {key} sub-keys: {list(val.keys())[:10]}')
 
           products = extract_products(data)
           print(f'\nGefundene Produkte: {len(products)}')
@@ -195,6 +186,9 @@ jobs:
           )
           lang_dist = Counter(p['lang'] for p in products)
           print(f'Sprachverteilung: {dict(lang_dist)}')
+          print(f'Top 5 Produkte:')
+          for p in products[:5]:
+              print(f'  {p["name"][:50]} | {p["earnings"]} | Prov: {p["commission_pct"]}')
 
           total_posted = 0
           for product in products[:25]:
