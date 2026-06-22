@@ -29,7 +29,6 @@ jobs:
           }
 
           async function main() {
-            // ClickBank GraphQL is public — no auth required
             console.log('Fetching ClickBank marketplace products...');
 
             const gqlResp = await request(
@@ -60,9 +59,9 @@ jobs:
                 variables: {
                   parameters: {
                     category: null,
-                    sortField: 'rank',
-                    sortDescending: false,
-                    resultsPerPage: 20,
+                    sortField: 'gravity',
+                    sortDescending: true,
+                    resultsPerPage: 50,
                     offset: 0,
                     nicknameMasq: null
                   }
@@ -80,16 +79,15 @@ jobs:
             }
 
             const hits = gqlData.data.marketplaceSearch.hits || [];
-            console.log(`Found ${gqlData.data.marketplaceSearch.totalHits} total products, processing ${hits.length}`);
+            console.log(`Found ${gqlData.data.marketplaceSearch.totalHits} total, fetched ${hits.length}`);
 
-            // Filter: gravity >= 20 and EPS >= 30
+            // Filter: gravity >= 10 and EPS >= 20
             const filtered = hits.filter(h => {
               const stats = h.marketplaceStats || {};
-              return (stats.gravity || 0) >= 20 && (stats.averageDollarsPerSale || 0) >= 30;
+              return (stats.gravity || 0) >= 10 && (stats.averageDollarsPerSale || 0) >= 20;
             });
-            console.log(`After filter (gravity>=20, EPS>=30): ${filtered.length} products`);
+            console.log(`After filter (gravity>=10, EPS>=20): ${filtered.length} products`);
 
-            // Map to Make.com format
             const products = filtered.map(h => {
               const stats = h.marketplaceStats || {};
               return {
@@ -111,7 +109,6 @@ jobs:
               return;
             }
 
-            // POST to Make.com SA-01-CB webhook
             const webhookResp = await request(
               'hook.eu1.make.com',
               '/882803j9m5617e1ozp7jhuviicsrpjeb',
