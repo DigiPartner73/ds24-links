@@ -5,119 +5,90 @@ on:
     - cron: '0 6 * * *'
   workflow_dispatch:
 
+env:
+  MAKE_WEBHOOK: https://hook.eu1.make.com/882803j9m5617e1ozp7jhuviicsrpjeb
+
 jobs:
   scout:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch ClickBank Top Products and Push to Make.com
+        env:
+          CLICKBANK_AUTH: ${{ secrets.CLICKBANK_AUTH }}
         run: |
           node << 'NODEEOF'
           const https = require('https');
 
-          const makeRequest = (options, body) => new Promise((resolve, reject) => {
-            const req = https.request(options, (res) => {
-              let data = '';
-              res.on('data', chunk => data += chunk);
-              res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+          const makeReq = (opts, body) => new Promise((res, rej) => {
+            const req = https.request(opts, r => {
+              let d = '';
+              r.on('data', c => d += c);
+              r.on('end', () => res({ status: r.statusCode, ct: r.headers['content-type'] || '', body: d }));
             });
-            req.on('error', reject);
+            req.on('error', rej);
             if (body) req.write(body);
             req.end();
           });
 
           (async () => {
-            // Try 1: ClickBank official REST API (public marketplace search)
-            const restPath = '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=50&country=ALL';
-            console.log('Trying ClickBank REST API:', restPath);
-            let products = null;
+            const authKey = process.env.CLICKBANK_AUTH || '';
+            const headers = { 'Accept': 'application/json' };
+            if (authKey) headers['Authorization'] = authKey;
 
-            try {
-              const cbResp = await makeRequest({
-                hostname: 'api.clickbank.com',
-                path: restPath,
-                method: 'GET',
-                headers: { 'Accept': 'application/json' }
-              });
-              console.log('REST status:', cbResp.status, '| Content-Type:', cbResp.headers['content-type']);
-              console.log('REST preview:', cbResp.body.slice(0, 300));
+            console.log('Auth configured:', !!authKey);
+            console.log('Calling api.clickbank.com/rest/1.3/marketplace/search...');
 
-              if (cbResp.status === 200 && cbResp.headers['content-type'] && cbResp.headers['content-type'].includes('json')) {
-                const parsed = JSON.parse(cbResp.body);
-                const raw = parsed.results || parsed.products || parsed.hits || [];
-                products = raw.map(p => ({
-                  site: p.site || p.nickname || p.vendorNickname || '',
-                  title: p.title || p.name || '',
-                  description: p.description || '',
-                  marketplaceStats: {
-                    gravity: parseFloat(p.gravity || p.popularityRank || 0),
-                    averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || p.dollarsSale || 0),
-                    category: p.category || ''
-                  }
-                }));
-                console.log('REST API: fetched', products.length, 'products');
-              }
-            } catch(e) {
-              console.log('REST API error:', e.message);
-            }
+            const r = await makeReq({
+              hostname: 'api.clickbank.com',
+              path: '/rest/1.3/marketplace/search?sortField=GRAVITY&sortDescending=1&perPage=50',
+              method: 'GET',
+              headers
+            });
 
-            // Try 2: GraphQL API (works if called with ClickBank session)
-            if (!products) {
-              console.log('Trying GraphQL API...');
-              const gqlBody = JSON.stringify({
-                query: `query ($parameters: MarketplaceSearchParameters!) {
-                  marketplaceSearch(parameters: $parameters) {
-                    totalHits
-                    hits {
-                      site title description
-                      marketplaceStats { gravity averageDollarsPerSale category }
-                    }
-                  }
-                }`,
-                variables: {
-                  parameters: { sortField: "gravity", sortDescending: true, resultsPerPage: 50, offset: 0, nicknameMasq: null }
-                }
-              });
+            console.log('Status:', r.status, '| Content-Type:', r.ct);
+            console.log('Body preview:', r.body.slice(0, 300));
 
-              try {
-                const gqlResp = await makeRequest({
-                  hostname: 'accounts.clickbank.com',
-                  path: '/graphql',
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(gqlBody) }
-                }, gqlBody);
-
-                console.log('GraphQL status:', gqlResp.status, '| Content-Type:', gqlResp.headers['content-type']);
-                console.log('GraphQL preview:', gqlResp.body.slice(0, 300));
-
-                if (gqlResp.status === 200 && gqlResp.headers['content-type'] && gqlResp.headers['content-type'].includes('json')) {
-                  const parsed = JSON.parse(gqlResp.body);
-                  products = parsed.data.marketplaceSearch.hits;
-                  console.log('GraphQL: fetched', products.length, 'products');
-                }
-              } catch(e) {
-                console.log('GraphQL error:', e.message);
-              }
-            }
-
-            if (!products || products.length === 0) {
+            if (r.status !== 200 || !r.ct.includes('json')) {
               console.log('');
-              console.log('=== ACTION REQUIRED ===');
-              console.log('Both ClickBank endpoints require authentication.');
-              console.log('ClickBank REST API returned non-JSON or error.');
-              console.log('To fix: Add CLICKBANK_CLERK_KEY secret in GitHub repo settings,');
-              console.log('then add Authorization header to the REST API call.');
-              console.log('=======================');
+              if (!authKey) {
+                console.log('=== SETUP REQUIRED ===');
+                console.log('Add GitHub Secret CLICKBANK_AUTH with value:');
+                console.log('  DEV_API_KEY:CLERK_API_KEY');
+                console.log('Get keys at: ClickBank account > Settings > API Settings');
+                console.log('======================');
+              } else {
+                console.log('ERROR: Auth failed. Check CLICKBANK_AUTH secret format.');
+                console.log('Expected: DEV_API_KEY:CLERK_API_KEY');
+                process.exit(1);
+              }
               process.exit(0);
             }
 
-            // Push to Make.com webhook
+            const parsed = JSON.parse(r.body);
+            const raw = parsed.results || parsed.products || parsed.hits || [];
+            const products = raw.map(p => ({
+              site: p.site || p.nickname || p.vendorNickname || '',
+              title: p.title || p.name || '',
+              description: p.description || '',
+              marketplaceStats: {
+                gravity: parseFloat(p.gravity || p.popularityRank || 0),
+                averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || p.dollarsSale || 0),
+                category: p.category || ''
+              }
+            }));
+
+            console.log('Fetched', products.length, 'products from ClickBank');
+            if (!products.length) { console.log('No products returned.'); process.exit(0); }
+
             const payload = JSON.stringify({ products });
-            const makeResp = await makeRequest({
+            const webhook = process.env.MAKE_WEBHOOK;
+            const makeResp = await makeReq({
               hostname: 'hook.eu1.make.com',
-              path: '/882803j9m5617e1ozp7jhuviicsrpjeb',
+              path: '/' + webhook.split('/').pop(),
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
             }, payload);
-            console.log('Make.com response:', makeResp.status, makeResp.body);
+
+            console.log('Make.com:', makeResp.status, makeResp.body);
           })();
           NODEEOF
