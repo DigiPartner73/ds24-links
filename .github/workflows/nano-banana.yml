@@ -49,6 +49,7 @@ jobs:
           if not J2V_API_KEY: print('ERROR: json2video_api_key missing'); sys.exit(1)
           print(f'Keys: NB={NB_API_KEY[:8]}... J2V={J2V_API_KEY[:8]}...')
 
+          # Find record to process
           resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
           if not records:
@@ -59,8 +60,10 @@ jobs:
           fields = record['fields']
           print(f"Processing: {record_id}")
 
+          # Lock record
           at_patch(record_id, {'Status': 'nb_processing'})
 
+          # Voiceover URLs
           vo_a = fields.get('Voiceover_DL_A', '')
           vo_b = fields.get('Voiceover_DL_B', '')
           vo_c = fields.get('Voiceover_DL_C', '')
@@ -69,6 +72,7 @@ jobs:
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
           print('Voiceover URLs OK')
 
+          # Build prompts
           base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle scene'
           suffix = ', 9:16 vertical video, cinematic, smooth motion, no face, no text'
           prompts = [
@@ -89,13 +93,12 @@ jobs:
                       headers=NB_HEADERS,
                       json={
                           'prompt': prompt,
-                          'resolution': '480p',
+                          'resolution': '720p',
                           'duration': 3,
                           'aspect_ratio': '9:16',
                           'video_model': 'seedance2',
-                          'motion_intensity': 'low'
                       },
-                      timeout=240
+                      timeout=270
                   )
                   print(f'HTTP {resp.status_code}')
 
@@ -103,7 +106,8 @@ jobs:
                       data = resp.json()
                       reset_secs = data.get('rate_limit', {}).get('reset_in_seconds', 300)
                       reset_at = data.get('rate_limit', {}).get('reset_at', '?')
-                      print(f'RATE LIMIT! Reset in {reset_secs}s at {reset_at}. Resetting for retry.')
+                      print(f'RATE LIMIT: {data.get("error","?")}')
+                      print(f'Reset in {reset_secs}s at {reset_at}')
                       at_patch(record_id, {'Status': 'clips_rendering'})
                       sys.exit(0)
 
@@ -114,38 +118,48 @@ jobs:
                   data = resp.json()
                   clip_url = data.get('video_url', '')
                   if not clip_url:
-                      print(f'No video_url: {data}')
+                      print(f'No video_url in response: {data}')
                       at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
 
-                  print(f'Clip {clip_num} OK: {clip_url[:70]}')
+                  print(f'Clip {clip_num} OK: {clip_url[:70]}...')
                   return clip_url
 
               except requests.exceptions.Timeout:
-                  print(f'TIMEOUT (>240s) on clip {clip_num}. Resetting for retry.')
+                  print(f'TIMEOUT (>270s) on clip {clip_num}')
                   at_patch(record_id, {'Status': 'clips_rendering'})
                   sys.exit(0)
 
               except requests.exceptions.ConnectionError as e:
                   print(f'ConnectionError clip {clip_num}: {e}')
-                  print('Resetting record for retry by next scheduled run.')
                   at_patch(record_id, {'Status': 'clips_rendering'})
                   sys.exit(0)
 
               except Exception as e:
-                  print(f'Unexpected ({type(e).__name__}): {e}')
+                  print(f'Unexpected error ({type(e).__name__}): {e}')
                   at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
 
+          # Generate all 4 clips sequentially
           clips = []
           for i, prompt in enumerate(prompts):
               url = generate_clip(prompt, i+1)
               clips.append(url)
 
-          print(f'All 4 clips: {clips}')
+          print(f'All 4 clips OK: {clips}')
 
+          # Submit 3 JSON2Video renders (A, B, C variants)
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
+          def make_scene(clip_url):
+              return {
+                  'background-color': '#000000',
+                  'duration': -1,
+                  'elements': [{'type': 'video', 'src': clip_url,
+                      'width': 1080, 'height': 1920, 'x': 0, 'y': 0,
+                      'loop': -1, 'duration': -2}]
+              }
+
           def submit_j2v(audio_url, variant):
-              print(f'Submitting J2V variant {variant}...')
+              print(f'Submitting JSON2Video variant {variant}...')
               body = {
                   'width': 1080, 'height': 1920, 'quality': 'high',
                   'elements': [
@@ -157,16 +171,8 @@ jobs:
                            'max-words-per-line': 3, 'position': 'bottom-center'}},
                       {'type': 'audio', 'src': audio_url}
                   ],
-                  'scenes': [
-                      {'background-color': '#000000', 'duration': -1,
-                       'elements': [{'type': 'video', 'src': clips[0], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
-                      {'background-color': '#000000', 'duration': -1,
-                       'elements': [{'type': 'video', 'src': clips[1], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
-                      {'background-color': '#000000', 'duration': -1,
-                       'elements': [{'type': 'video', 'src': clips[2], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]},
-                      {'background-color': '#000000', 'duration': -1,
-                       'elements': [{'type': 'video', 'src': clips[3], 'width': 1080, 'height': 1920, 'x': 0, 'y': 0, 'loop': -1, 'duration': -2}]}
-                  ]
+                  'scenes': [make_scene(clips[0]), make_scene(clips[1]),
+                             make_scene(clips[2]), make_scene(clips[3])]
               }
               r = requests.post('https://api.json2video.com/v2/movies',
                   headers=J2V_HEADERS, json=body).json()
@@ -179,7 +185,7 @@ jobs:
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: J2V failed. A={project_a} B={project_b} C={project_c}')
+              print(f'ERROR: JSON2Video failed. A={project_a} B={project_b} C={project_c}')
               at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
           update_fields = {'Status': 'video_rendering', 'JSON2Video_ID': project_c}
@@ -187,5 +193,5 @@ jobs:
           if project_b: update_fields['JSON2Video_ID_B'] = project_b
 
           r = at_patch(record_id, update_fields)
-          print(f'DONE! J2V: A={project_a} B={project_b} C={project_c}')
+          print(f'DONE! Record={r.get("id","ERROR")} J2V: A={project_a} B={project_b} C={project_c}')
           PYEOF
