@@ -31,12 +31,16 @@ jobs:
           });
 
           (async () => {
-            const authKey = process.env.CLICKBANK_AUTH || '';
-            const headers = { 'Accept': 'application/json' };
-            if (authKey) headers['Authorization'] = authKey;
+            const rawKey = process.env.CLICKBANK_AUTH || '';
+            console.log('Auth key present:', !!rawKey);
 
-            console.log('Auth configured:', !!authKey);
-            console.log('Calling api.clickbank.com/rest/1.3/marketplace/search...');
+            // ClickBank v1.3 erwartet DEV_KEY:CLERK_KEY — wenn nur DEV_KEY vorhanden, Doppelpunkt anhängen
+            const authHeader = rawKey.includes(':') ? rawKey : (rawKey ? rawKey + ':' : '');
+
+            const headers = { 'Accept': 'application/json' };
+            if (authHeader) headers['Authorization'] = authHeader;
+
+            console.log('Calling ClickBank Marketplace API...');
 
             const r = await makeReq({
               hostname: 'api.clickbank.com',
@@ -46,40 +50,42 @@ jobs:
             });
 
             console.log('Status:', r.status, '| Content-Type:', r.ct);
-            console.log('Body preview:', r.body.slice(0, 300));
+            console.log('Body preview:', r.body.slice(0, 500));
 
             if (r.status !== 200 || !r.ct.includes('json')) {
-              console.log('');
-              if (!authKey) {
-                console.log('=== SETUP REQUIRED ===');
-                console.log('Add GitHub Secret CLICKBANK_AUTH with value:');
-                console.log('  DEV_API_KEY:CLERK_API_KEY');
-                console.log('Get keys at: ClickBank account > Settings > API Settings');
-                console.log('======================');
+              if (!rawKey) {
+                console.log('=== SETUP REQUIRED: Add CLICKBANK_AUTH secret ===');
               } else {
-                console.log('ERROR: Auth failed. Check CLICKBANK_AUTH secret format.');
-                console.log('Expected: DEV_API_KEY:CLERK_API_KEY');
+                console.log('ERROR: ClickBank API rejected request. Status:', r.status);
+                console.log('Try: Account Settings -> API Management -> check key format');
                 process.exit(1);
               }
               process.exit(0);
             }
 
             const parsed = JSON.parse(r.body);
-            const raw = parsed.results || parsed.products || parsed.hits || [];
+            console.log('Response keys:', Object.keys(parsed).join(', '));
+
+            const raw = parsed.results || parsed.products || parsed.hits || parsed.items || parsed.data || [];
+            console.log('Products found:', Array.isArray(raw) ? raw.length : 'not array: ' + typeof raw);
+
+            if (!raw.length) {
+              console.log('No products returned. Full response:', r.body.slice(0, 1000));
+              process.exit(0);
+            }
+
             const products = raw.map(p => ({
               site: p.site || p.nickname || p.vendorNickname || '',
               title: p.title || p.name || '',
               description: p.description || '',
               marketplaceStats: {
-                gravity: parseFloat(p.gravity || p.popularityRank || 0),
-                averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || p.dollarsSale || 0),
-                category: p.category || ''
+                gravity: parseFloat(p.gravity || p.popularityRank || p.marketplaceStats?.gravity || 0),
+                averageDollarsPerSale: parseFloat(p.averageDollarsPerSale || p.dollarsSale || p.marketplaceStats?.averageDollarsPerSale || 0),
+                category: p.category || p.marketplaceStats?.category || ''
               }
             }));
 
-            console.log('Fetched', products.length, 'products from ClickBank');
-            if (!products.length) { console.log('No products returned.'); process.exit(0); }
-
+            console.log('Sending', products.length, 'products to Make.com...');
             const payload = JSON.stringify({ products });
             const webhook = process.env.MAKE_WEBHOOK;
             const makeResp = await makeReq({
@@ -89,6 +95,6 @@ jobs:
               headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
             }, payload);
 
-            console.log('Make.com:', makeResp.status, makeResp.body);
+            console.log('Make.com response:', makeResp.status, makeResp.body);
           })();
           NODEEOF
