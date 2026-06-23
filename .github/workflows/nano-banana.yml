@@ -27,9 +27,9 @@ jobs:
           from datetime import datetime, timezone, timedelta
           from requests.adapters import HTTPAdapter
 
-          # ââ TCP keepalive adapter âââââââââââââââââââââââââââââââââââââââââââââ
+          # - TCP keepalive adapter -
           # Azure-hosted runners: NAT Gateway drops idle TCP after ~240-350s.
-          # NB API generation can take 3-5+ min â keepalive probes keep NAT alive.
+          # NB API generation can take 3-5+ min - keepalive probes keep NAT alive.
           class TCPKeepaliveAdapter(HTTPAdapter):
               def init_poolmanager(self, *args, **kwargs):
                   kwargs['socket_options'] = [
@@ -91,7 +91,7 @@ jobs:
               sep = '&' if '?' in url else '?'
               return url + sep + 'dl=1'
 
-          # ââ Load API keys âââââââââââââââââââââââââââââââââââââââââââââââââââââ
+          # - Load API keys -
           NB_API_KEY  = get_config('nanobanana_api_key')
           J2V_API_KEY = get_config('json2video_api_key')
           PEXELS_KEY  = get_config('pexels_api_key')
@@ -104,7 +104,7 @@ jobs:
           if nb_ok:
               print(f'NB endpoint: {NB_ENDPOINT}')
 
-          # ââ NB Rate-Limit Pre-Check âââââââââââââââââââââââââââââââââââââââââââ
+          # - NB Rate-Limit Pre-Check -
           if nb_ok:
               rl_reset = get_config('nanobanana_rate_limit_reset')
               if rl_reset:
@@ -126,27 +126,27 @@ jobs:
                       print(f'WARN: cannot parse rate_limit_reset "{rl_reset}": {e}. Pexels fallback.')
                       nb_ok = False
 
-          # ââ Find record to process ââââââââââââââââââââââââââââââââââââââââââââ
+          # - Find record to process -
           resp    = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
           if not records:
-              print('Nothing to do â no clips_rendering records.'); sys.exit(0)
+              print('Nothing to do - no clips_rendering records.'); sys.exit(0)
 
           record    = records[0]
           record_id = record['id']
           fields    = record['fields']
-          print(f'Processing: {record_id} ({fields.get("Produktname","?")[:50]})')
+          print(f'Processing: {record_id} ({fields.get("Produktname","-")[:50]})')
           at_patch(record_id, {'Status': 'nb_processing'})  # lock
 
           vo_a = ensure_dl_url(fields.get('Voiceover_DL_A', ''))
           vo_b = ensure_dl_url(fields.get('Voiceover_DL_B', ''))
           vo_c = ensure_dl_url(fields.get('Voiceover_DL_C', ''))
           if not all([vo_a, vo_b, vo_c]):
-              print(f'ERROR: Voiceover_DL missing â A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
+              print(f'ERROR: Voiceover_DL missing - A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
           print('Voiceover DL URLs OK (A/B/C)')
 
-          # ââ Generate Background Clip (NB API or Pexels fallback) âââââââââââââ
+          # - Generate Background Clip (NB API or Pexels fallback) -
           clip_url = FALLBACK_CLIP
 
           if nb_ok:
@@ -185,7 +185,7 @@ jobs:
                       reset_at   = rl.get('reset_at', '')
                       reset_secs = rl.get('reset_in_seconds', 0)
                       retry_hdr  = int(nb_resp.headers.get('Retry-After', reset_secs or 1800))
-                      print(f'NB RATE LIMIT â reset_at="{reset_at}" Retry-After={retry_hdr}s')
+                      print(f'NB RATE LIMIT - reset_at="{reset_at}" Retry-After={retry_hdr}s')
                       if reset_at:
                           set_config('nanobanana_rate_limit_reset', reset_at)
                       else:
@@ -206,7 +206,7 @@ jobs:
                           set_config('nanobanana_rate_limit_reset', '')  # clear flag
                           rl_info  = data.get('rate_limit', {})
                           print(f'NB clip OK in {elapsed}s: {clip_url[:80]}')
-                          print(f'NB quota: {rl_info.get("remaining","?")} / {rl_info.get("limit","?")} remaining')
+                          print(f'NB quota: {rl_info.get("remaining","-")} / {rl_info.get("limit","-")} remaining')
                       else:
                           print(f'NB 200 but no video_url: {data}. Pexels fallback.')
                           nb_ok = False
@@ -244,25 +244,25 @@ jobs:
                                              key=lambda f: f.get('height', 0), reverse=True)
                               if files:
                                   clip_url = files[0]['link']
-                                  w = files[0].get('width', '?')
-                                  h = files[0].get('height', '?')
+                                  w = files[0].get('width', '-')
+                                  h = files[0].get('height', '-')
                                   print(f'Pexels OK ({w}x{h})')
                       else:
-                          print(f'Pexels HTTP {r.status_code} â CDN fallback')
+                          print(f'Pexels HTTP {r.status_code} - CDN fallback')
                   except Exception as e:
-                      print(f'Pexels error: {e} â CDN fallback')
+                      print(f'Pexels error: {e} - CDN fallback')
               else:
-                  print('No pexels_api_key â CDN fallback clip')
+                  print('No pexels_api_key - CDN fallback clip')
 
           print(f'Background clip: {clip_url[:80]}')
 
-          # ââ Submit 3 JSON2Video renders (A/B/C variants) âââââââââââââââââââââ
+          # - Submit 3 JSON2Video renders (A/B/C variants) -
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
           def submit_j2v(audio_url, variant):
               print(f'[{time.strftime("%H:%M:%S")}] JSON2Video variant {variant}...')
               # Bug #18 fix: audio MUST be inside the scene (not at movie level)
-              # scene duration=-1 â auto-length from audio element
+              # scene duration=-1 - auto-length from audio element
               body = {
                   'width': 1080, 'height': 1920, 'quality': 'high',
                   'elements': [{
@@ -314,7 +314,7 @@ jobs:
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: J2V failed â A={project_a} B={project_b} C={project_c}')
+              print(f'ERROR: J2V failed - A={project_a} B={project_b} C={project_c}')
               at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
           update_fields = {'Status': 'video_rendering', 'JSON2Video_ID': project_c}
@@ -322,6 +322,6 @@ jobs:
           if project_b: update_fields['JSON2Video_ID_B'] = project_b
 
           result = at_patch(record_id, update_fields)
-          print(f'SUCCESS! Record={result.get("id","?")} Status=video_rendering')
+          print(f'SUCCESS! Record={result.get("id","-")} Status=video_rendering')
           print(f'J2V IDs: A={project_a} B={project_b} C={project_c}')
           PYEOF
