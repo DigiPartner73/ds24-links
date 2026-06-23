@@ -173,7 +173,7 @@ jobs:
                           'aspect_ratio':     '9:16',
                           'motion_intensity': 'medium',
                       },
-                      timeout=600
+                      timeout=180
                   )
                   elapsed = int(time.time() - t0)
                   print(f'NB HTTP {nb_resp.status_code} after {elapsed}s')
