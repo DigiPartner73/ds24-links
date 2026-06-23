@@ -18,7 +18,6 @@
   }
   *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: var(--bg); color: var(--text); font-family: 'DM Sans', sans-serif; font-weight: 300; min-height: 100vh; }
-  site-header { border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem; position: sticky; top: 0; background: rgba(13,13,13,0.95); backdrop-filter: blur(12px); z-index: 10; }
   .site-header { border-bottom: 1px solid var(--border); padding: 1.5rem 2rem; display: flex; align-items: center; gap: 1rem; position: sticky; top: 0; background: rgba(13,13,13,0.95); backdrop-filter: blur(12px); z-index: 10; }
   .logo-icon { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; }
   .logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: var(--gold); letter-spacing: 0.02em; }
@@ -76,31 +75,26 @@
 <footer>* Diese Seite enthält Affiliate-Links. Wenn du über einen dieser Links kaufst, erhalte ich eine Provision. Für dich entstehen dabei keine Mehrkosten.</footer>
 
 <script>
-  const WEBHOOK_URL = 'https://hook.eu1.make.com/kk973ehbeb296119xriqc1sjt6x56tdh';
+  const PRODUCTS_URL = 'https://digipartner73.github.io/ds24-links/products.json';
   async function loadProducts() {
-    const list = document.getElementById('product-list');
-    const countText = document.getElementById('count-text');
+    var list = document.getElementById('product-list');
+    var countText = document.getElementById('count-text');
     try {
-      const res = await fetch(WEBHOOK_URL);
-      const text = await res.text();
-      const lines = text.trim().split('\n').filter(Boolean);
-      const products = [];
-      for (const line of lines) {
-        try { const obj = JSON.parse(line); if (obj.produktname) products.push(obj); } catch(e) {}
-      }
-      if (products.length === 0) {
+      var res = await fetch(PRODUCTS_URL + '?v=' + Date.now());
+      var products = await res.json();
+      if (!Array.isArray(products) || products.length === 0) {
         list.innerHTML = '<div class="empty">Keine Produkte verfügbar.</div>';
         countText.textContent = '';
         return;
       }
       countText.textContent = products.length + ' Produkte verfügbar';
       list.innerHTML = products.map(function(p, i) {
-        const delay = i * 60;
-        const link = p.link && p.link.trim() ? p.link : '';
-        return '<div class="product-card" style="animation-delay:' + delay + 'ms"><div class="card-inner"><div class="card-content"><div class="product-name">' + escHtml(p.produktname) + '</div><div class="product-desc">' + escHtml(p.beschreibung || '') + '</div></div><div class="card-action">' + (link ? '<a class="btn" href="' + escHtml(link) + '" target="_blank" rel="noopener">Ansehen <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M7 7h10v10"/></svg></a>' : '') + '</div></div></div>';
+        var delay = i * 60;
+        var link = p.link && p.link.trim() ? p.link : '';
+        return '<div class="product-card" style="animation-delay:' + delay + 'ms"><div class="card-inner"><div class="card-content"><div class="product-name">' + escHtml(p.produktname) + '</div><div class="product-desc">' + escHtml(p.beschreibung || '') + '</div></div><div class="card-action">' + (link ? '<a class="btn" href="' + escHtml(link) + '" target="_blank" rel="noopener noreferrer">Ansehen <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M7 7h10v10"/></svg></a>' : '') + '</div></div></div>';
       }).join('');
     } catch(err) {
-      list.innerHTML = '<div class="empty">Fehler beim Laden der Produkte.</div>';
+      list.innerHTML = '<div class="empty">Fehler beim Laden. Bitte Seite neu laden.</div>';
       countText.textContent = '';
     }
   }
