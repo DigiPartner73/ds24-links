@@ -12,7 +12,7 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Generate clips and render videos
         env:
@@ -23,14 +23,37 @@ jobs:
           import os
           import sys
           import time
+          import socket
+          from datetime import datetime, timezone, timedelta
+          from requests.adapters import HTTPAdapter
 
-          FALLBACK_CLIP = 'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4'
+          # ââ TCP keepalive adapter âââââââââââââââââââââââââââââââââââââââââââââ
+          # Azure-hosted runners: NAT Gateway drops idle TCP after ~240-350s.
+          # NB API generation can take 3-5+ min â keepalive probes keep NAT alive.
+          class TCPKeepaliveAdapter(HTTPAdapter):
+              def init_poolmanager(self, *args, **kwargs):
+                  kwargs['socket_options'] = [
+                      (socket.SOL_SOCKET,  socket.SO_KEEPALIVE,  1),
+                      (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE,  60),
+                      (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 30),
+                      (socket.IPPROTO_TCP, socket.TCP_KEEPCNT,   10),
+                  ]
+                  super().init_poolmanager(*args, **kwargs)
 
-          AT_TOKEN = os.environ['AIRTABLE_TOKEN']
-          BASE_ID = 'apppfrE10FwXz9IMY'
-          TABLE_ID = 'tblm1szgXQZc0mRle'
+          nb_session = requests.Session()
+          nb_session.mount('https://', TCPKeepaliveAdapter())
+          nb_session.mount('http://',  TCPKeepaliveAdapter())
+
+          AT_TOKEN     = os.environ['AIRTABLE_TOKEN']
+          BASE_ID      = 'apppfrE10FwXz9IMY'
+          TABLE_ID     = 'tblm1szgXQZc0mRle'
           CONFIG_TABLE = 'tblHq1P7Z7bE7hUEj'
-          AT_HEADERS = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
+          AT_HEADERS   = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
+
+          # v8: corrected endpoint with .php extension (API docs v1.0)
+          NB_ENDPOINT   = 'https://nanobananavideo.com/api/v1/text-to-video.php'
+          FALLBACK_CLIP = 'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4'
+          RL_BUFFER_S   = 120  # 2-min safety margin after rate limit reset
 
           def at_get(table, params):
               return requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{table}',
@@ -46,93 +69,216 @@ jobs:
               recs = r.get('records', [])
               return recs[0]['fields'].get('Wert', '') if recs else ''
 
-          def ensure_dl_url(dropbox_url):
-              if not dropbox_url or 'dropbox.com' not in dropbox_url:
-                  return dropbox_url
-              if 'dl=1' in dropbox_url:
-                  return dropbox_url
-              if 'dl=0' in dropbox_url:
-                  return dropbox_url.replace('dl=0', 'dl=1')
-              sep = '&' if '?' in dropbox_url else '?'
-              return dropbox_url + sep + 'dl=1'
+          def set_config(key, value):
+              r = at_get(CONFIG_TABLE, {'filterByFormula': f'{{Parameter}}="{key}"', 'maxRecords': 1})
+              recs = r.get('records', [])
+              if recs:
+                  rid = recs[0]['id']
+                  requests.patch(f'https://api.airtable.com/v0/{BASE_ID}/{CONFIG_TABLE}/{rid}',
+                      headers=AT_HEADERS, json={'fields': {'Wert': value}})
+              else:
+                  requests.post(f'https://api.airtable.com/v0/{BASE_ID}/{CONFIG_TABLE}',
+                      headers=AT_HEADERS,
+                      json={'records': [{'fields': {'Parameter': key, 'Wert': value}}]})
 
-          PEXELS_KEY = get_config('pexels_api_key')
+          def ensure_dl_url(url):
+              if not url or 'dropbox.com' not in url:
+                  return url
+              if 'dl=1' in url:
+                  return url
+              if 'dl=0' in url:
+                  return url.replace('dl=0', 'dl=1')
+              sep = '&' if '?' in url else '?'
+              return url + sep + 'dl=1'
+
+          # ââ Load API keys âââââââââââââââââââââââââââââââââââââââââââââââââââââ
+          NB_API_KEY  = get_config('nanobanana_api_key')
           J2V_API_KEY = get_config('json2video_api_key')
+          PEXELS_KEY  = get_config('pexels_api_key')
+
           if not J2V_API_KEY:
-              print('ERROR: json2video_api_key missing from Airtable Config')
-              sys.exit(1)
+              print('ERROR: json2video_api_key missing from Config'); sys.exit(1)
 
-          print(f'J2V key: {J2V_API_KEY[:8]}...')
+          nb_ok = bool(NB_API_KEY)
+          print(f'v8 | NB: {"OK " + NB_API_KEY[:8] + "..." if nb_ok else "MISSING"} | J2V: {J2V_API_KEY[:8]}...')
+          if nb_ok:
+              print(f'NB endpoint: {NB_ENDPOINT}')
 
-          resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
+          # ââ NB Rate-Limit Pre-Check âââââââââââââââââââââââââââââââââââââââââââ
+          if nb_ok:
+              rl_reset = get_config('nanobanana_rate_limit_reset')
+              if rl_reset:
+                  try:
+                      norm = rl_reset.strip().replace(' ', 'T')
+                      if norm.endswith('Z'):
+                          norm = norm[:-1] + '+00:00'
+                      elif '+' not in norm and norm.count('-') <= 2:
+                          norm += '+00:00'
+                      reset_dt  = datetime.fromisoformat(norm)
+                      remaining = (reset_dt - datetime.now(timezone.utc)).total_seconds()
+                      if remaining > -RL_BUFFER_S:
+                          wait = int(remaining + RL_BUFFER_S)
+                          print(f'NB rate limit active (~{wait}s left). Pexels fallback this run.')
+                          nb_ok = False
+                      else:
+                          print(f'NB rate limit cleared {int(-remaining)}s ago. NB available.')
+                  except Exception as e:
+                      print(f'WARN: cannot parse rate_limit_reset "{rl_reset}": {e}. Pexels fallback.')
+                      nb_ok = False
+
+          # ââ Find record to process ââââââââââââââââââââââââââââââââââââââââââââ
+          resp    = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
           records = resp.get('records', [])
           if not records:
-              print('Nothing to do - no clips_rendering records.'); sys.exit(0)
+              print('Nothing to do â no clips_rendering records.'); sys.exit(0)
 
-          record = records[0]
+          record    = records[0]
           record_id = record['id']
-          fields = record['fields']
+          fields    = record['fields']
           print(f'Processing: {record_id} ({fields.get("Produktname","?")[:50]})')
-
-          at_patch(record_id, {'Status': 'nb_processing'})
+          at_patch(record_id, {'Status': 'nb_processing'})  # lock
 
           vo_a = ensure_dl_url(fields.get('Voiceover_DL_A', ''))
           vo_b = ensure_dl_url(fields.get('Voiceover_DL_B', ''))
           vo_c = ensure_dl_url(fields.get('Voiceover_DL_C', ''))
           if not all([vo_a, vo_b, vo_c]):
-              print(f'ERROR: Missing Voiceover_DL URLs - A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
+              print(f'ERROR: Voiceover_DL missing â A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-          print(f'Voiceover DL URLs OK: A/B/C present')
+          print('Voiceover DL URLs OK (A/B/C)')
 
-          # Get ONE background clip (audio in scene drives duration - Bug #18 fix)
+          # ââ Generate Background Clip (NB API or Pexels fallback) âââââââââââââ
           clip_url = FALLBACK_CLIP
-          if PEXELS_KEY:
-              base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
-              print(f'Fetching Pexels clip: "{base_q[:45]}"...')
-              try:
-                  r = requests.get('https://api.pexels.com/videos/search',
-                      headers={'Authorization': PEXELS_KEY},
-                      params={'query': base_q, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
-                      timeout=15)
-                  if r.status_code == 200:
-                      videos = r.json().get('videos', [])
-                      if videos:
-                          files = sorted(videos[0].get('video_files', []),
-                                         key=lambda f: f.get('height', 0), reverse=True)
-                          if files:
-                              clip_url = files[0]['link']
-                              w, h = files[0].get('width','?'), files[0].get('height','?')
-                              print(f'Pexels clip OK ({w}x{h})')
-                  else:
-                      print(f'Pexels HTTP {r.status_code} - using fallback clip')
-              except Exception as e:
-                  print(f'Pexels error: {e} - using fallback clip')
-          else:
-              print('No pexels_api_key - using fallback CDN clip (v7)')
-          print(f'Clip URL: {clip_url[:60]}...')
 
+          if nb_ok:
+              base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle scene'
+              suffix = (', vertical 9:16 portrait format, cinematic smooth motion, '
+                        'no face, no text, no watermark, photorealistic, ultra-HD')
+              prompt = base_q + suffix
+              NB_HEADERS = {
+                  'Authorization': f'Bearer {NB_API_KEY}',
+                  'Content-Type':  'application/json'
+              }
+              print(f'[{time.strftime("%H:%M:%S")}] NB API request...')
+              print(f'Prompt: {prompt[:120]}')
+              t0 = time.time()
+              try:
+                  nb_resp = nb_session.post(
+                      NB_ENDPOINT,
+                      headers=NB_HEADERS,
+                      json={
+                          'prompt':           prompt,
+                          'video_model':      'seedance2',
+                          'resolution':       '720p',
+                          'duration':         5,
+                          'aspect_ratio':     '9:16',
+                          'motion_intensity': 'medium',
+                      },
+                      timeout=600
+                  )
+                  elapsed = int(time.time() - t0)
+                  print(f'NB HTTP {nb_resp.status_code} after {elapsed}s')
+
+                  if nb_resp.status_code == 429:
+                      try:    data = nb_resp.json()
+                      except: data = {}
+                      rl         = data.get('rate_limit', {})
+                      reset_at   = rl.get('reset_at', '')
+                      reset_secs = rl.get('reset_in_seconds', 0)
+                      retry_hdr  = int(nb_resp.headers.get('Retry-After', reset_secs or 1800))
+                      print(f'NB RATE LIMIT â reset_at="{reset_at}" Retry-After={retry_hdr}s')
+                      if reset_at:
+                          set_config('nanobanana_rate_limit_reset', reset_at)
+                      else:
+                          future = datetime.now(timezone.utc) + timedelta(seconds=max(retry_hdr, 1800))
+                          set_config('nanobanana_rate_limit_reset',
+                                     future.strftime('%Y-%m-%dT%H:%M:%S+00:00'))
+                      print('Switching to Pexels fallback for this run.')
+                      nb_ok = False
+
+                  elif nb_resp.status_code == 200:
+                      try:    data = nb_resp.json()
+                      except Exception as e:
+                          print(f'JSON parse error: {e}  body={nb_resp.text[:300]}')
+                          data = {}
+                      video_url = data.get('video_url', '')
+                      if video_url:
+                          clip_url = video_url
+                          set_config('nanobanana_rate_limit_reset', '')  # clear flag
+                          rl_info  = data.get('rate_limit', {})
+                          print(f'NB clip OK in {elapsed}s: {clip_url[:80]}')
+                          print(f'NB quota: {rl_info.get("remaining","?")} / {rl_info.get("limit","?")} remaining')
+                      else:
+                          print(f'NB 200 but no video_url: {data}. Pexels fallback.')
+                          nb_ok = False
+
+                  else:
+                      print(f'NB HTTP {nb_resp.status_code}: {nb_resp.text[:300]}. Pexels fallback.')
+                      nb_ok = False
+
+              except requests.exceptions.Timeout:
+                  elapsed = int(time.time() - t0)
+                  print(f'NB TIMEOUT after {elapsed}s. Pexels fallback.')
+                  nb_ok = False
+              except requests.exceptions.ConnectionError as e:
+                  print(f'NB ConnectionError: {str(e)[:200]}. Pexels fallback.')
+                  nb_ok = False
+              except Exception as e:
+                  print(f'NB unexpected {type(e).__name__}: {e}. Pexels fallback.')
+                  nb_ok = False
+
+          # Pexels fallback (also runs if nb_ok became False above)
+          if clip_url == FALLBACK_CLIP:
+              if PEXELS_KEY:
+                  base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
+                  print(f'Pexels clip: "{base_q[:45]}"...')
+                  try:
+                      r = requests.get('https://api.pexels.com/videos/search',
+                          headers={'Authorization': PEXELS_KEY},
+                          params={'query': base_q, 'orientation': 'portrait',
+                                  'size': 'large', 'per_page': 5},
+                          timeout=15)
+                      if r.status_code == 200:
+                          videos = r.json().get('videos', [])
+                          if videos:
+                              files = sorted(videos[0].get('video_files', []),
+                                             key=lambda f: f.get('height', 0), reverse=True)
+                              if files:
+                                  clip_url = files[0]['link']
+                                  w = files[0].get('width', '?')
+                                  h = files[0].get('height', '?')
+                                  print(f'Pexels OK ({w}x{h})')
+                      else:
+                          print(f'Pexels HTTP {r.status_code} â CDN fallback')
+                  except Exception as e:
+                      print(f'Pexels error: {e} â CDN fallback')
+              else:
+                  print('No pexels_api_key â CDN fallback clip')
+
+          print(f'Background clip: {clip_url[:80]}')
+
+          # ââ Submit 3 JSON2Video renders (A/B/C variants) âââââââââââââââââââââ
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
           def submit_j2v(audio_url, variant):
-              print(f'[{time.strftime("%H:%M:%S")}] Submitting JSON2Video variant {variant}...')
-              # FIX Bug #18: audio MUST be inside the scene, not at movie level
-              # scene duration=-1 derives from the audio element within the scene
+              print(f'[{time.strftime("%H:%M:%S")}] JSON2Video variant {variant}...')
+              # Bug #18 fix: audio MUST be inside the scene (not at movie level)
+              # scene duration=-1 â auto-length from audio element
               body = {
                   'width': 1080, 'height': 1920, 'quality': 'high',
                   'elements': [{
                       'type': 'subtitles',
                       'language': 'de',
                       'settings': {
-                          'style': 'classic',
-                          'font-family': 'Montserrat',
-                          'font-size': '80',
-                          'font-weight': '700',
-                          'word-color': '#FFD700',
-                          'line-color': '#FFFFFF',
-                          'outline-color': '#000000',
-                          'outline-width': 6,
+                          'style':              'classic',
+                          'font-family':        'Montserrat',
+                          'font-size':          '80',
+                          'font-weight':        '700',
+                          'word-color':         '#FFD700',
+                          'line-color':         '#FFFFFF',
+                          'outline-color':      '#000000',
+                          'outline-width':      6,
                           'max-words-per-line': 3,
-                          'position': 'bottom-center'
+                          'position':           'bottom-center'
                       }
                   }],
                   'scenes': [{
@@ -141,26 +287,26 @@ jobs:
                       'elements': [
                           {'type': 'audio', 'src': audio_url},
                           {
-                              'type': 'video',
-                              'src': clip_url,
-                              'width': 1080, 'height': 1920,
-                              'x': 0, 'y': 0,
-                              'loop': -1, 'duration': -2
+                              'type':   'video',
+                              'src':    clip_url,
+                              'width':  1080, 'height': 1920,
+                              'x': 0,   'y': 0,
+                              'loop':   -1, 'duration': -2
                           }
                       ]
                   }]
               }
               try:
-                  r = requests.post('https://api.json2video.com/v2/movies',
-                      headers=J2V_HEADERS, json=body, timeout=30).json()
+                  r   = requests.post('https://api.json2video.com/v2/movies',
+                          headers=J2V_HEADERS, json=body, timeout=30).json()
                   pid = r.get('project', '')
                   if pid:
                       print(f'  Variant {variant}: project_id={pid}')
                   else:
-                      print(f'  Variant {variant}: NO project_id! Response: {r}')
+                      print(f'  Variant {variant}: NO project_id! resp={r}')
                   return pid
               except Exception as e:
-                  print(f'  J2V submit error variant {variant}: {e}')
+                  print(f'  J2V error variant {variant}: {e}')
                   return ''
 
           project_a = submit_j2v(vo_a, 'A')
@@ -168,13 +314,10 @@ jobs:
           project_c = submit_j2v(vo_c, 'C')
 
           if not project_c:
-              print(f'ERROR: J2V failed - A={project_a} B={project_b} C={project_c}')
+              print(f'ERROR: J2V failed â A={project_a} B={project_b} C={project_c}')
               at_patch(record_id, {'Status': 'fehler_video'}); sys.exit(1)
 
-          update_fields = {
-              'Status': 'video_rendering',
-              'JSON2Video_ID': project_c,
-          }
+          update_fields = {'Status': 'video_rendering', 'JSON2Video_ID': project_c}
           if project_a: update_fields['JSON2Video_ID_A'] = project_a
           if project_b: update_fields['JSON2Video_ID_B'] = project_b
 
