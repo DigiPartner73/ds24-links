@@ -24,12 +24,7 @@ jobs:
           import sys
           import time
 
-          FALLBACK_CLIPS = [
-              'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4',
-              'https://videos.pexels.com/video-files/6115070/6115070-hd_720_1366_25fps.mp4',
-              'https://videos.pexels.com/video-files/7010338/7010338-uhd_2160_3840_24fps.mp4',
-              'https://videos.pexels.com/video-files/8231583/8231583-uhd_2160_4096_25fps.mp4',
-          ]
+          FALLBACK_CLIP = 'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4'
 
           AT_TOKEN = os.environ['AIRTABLE_TOKEN']
           BASE_ID = 'apppfrE10FwXz9IMY'
@@ -67,10 +62,6 @@ jobs:
               print('ERROR: json2video_api_key missing from Airtable Config')
               sys.exit(1)
 
-          if PEXELS_KEY:
-              print(f'Pexels API key found ({PEXELS_KEY[:8]}...) - using Pexels API (v6)')
-          else:
-              print('No pexels_api_key in Config - using 4 hardcoded CDN fallback clips (v6)')
           print(f'J2V key: {J2V_API_KEY[:8]}...')
 
           resp = at_get(TABLE_ID, {'filterByFormula': '{Status}="clips_rendering"', 'maxRecords': 1})
@@ -91,99 +82,73 @@ jobs:
           if not all([vo_a, vo_b, vo_c]):
               print(f'ERROR: Missing Voiceover_DL URLs - A={bool(vo_a)} B={bool(vo_b)} C={bool(vo_c)}')
               at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-          print(f'Voiceover DL URLs: A={vo_a[:60]} ...')
+          print(f'Voiceover DL URLs OK: A/B/C present')
 
+          # Get ONE background clip (audio in scene drives duration - Bug #18 fix)
+          clip_url = FALLBACK_CLIP
           if PEXELS_KEY:
               base_q = fields.get('Pexels_Query', '') or 'cinematic lifestyle'
-              queries = [
-                  fields.get('Pexels_Query') or base_q,
-                  fields.get('Pexels_Query_2') or (base_q + ' close detail'),
-                  fields.get('Pexels_Query_3') or (base_q + ' wide shot'),
-                  fields.get('Pexels_Query_4') or (base_q + ' slow motion'),
-              ]
-              print(f'Queries: {[q[:45] for q in queries]}')
-              PEXELS_HEADERS = {'Authorization': PEXELS_KEY}
-
-              def get_pexels_clip(query, clip_num):
-                  print(f'[{time.strftime("%H:%M:%S")}] Clip {clip_num}/4: "{query[:45]}"...')
-                  for attempt, params in enumerate([
-                      {'query': query, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
-                      {'query': query.split(',')[0].strip(), 'per_page': 5},
-                  ]):
-                      try:
-                          r = requests.get('https://api.pexels.com/videos/search',
-                              headers=PEXELS_HEADERS, params=params, timeout=15)
-                          if r.status_code != 200:
-                              print(f'  Pexels HTTP {r.status_code}: {r.text[:100]}')
-                              continue
-                          videos = r.json().get('videos', [])
-                          if not videos:
-                              print(f'  No results (attempt {attempt+1})')
-                              continue
-                          video = videos[0]
-                          files = sorted(video.get('video_files', []),
+              print(f'Fetching Pexels clip: "{base_q[:45]}"...')
+              try:
+                  r = requests.get('https://api.pexels.com/videos/search',
+                      headers={'Authorization': PEXELS_KEY},
+                      params={'query': base_q, 'orientation': 'portrait', 'size': 'large', 'per_page': 5},
+                      timeout=15)
+                  if r.status_code == 200:
+                      videos = r.json().get('videos', [])
+                      if videos:
+                          files = sorted(videos[0].get('video_files', []),
                                          key=lambda f: f.get('height', 0), reverse=True)
-                          if not files: continue
-                          url = files[0]['link']
-                          w, h = files[0].get('width','?'), files[0].get('height','?')
-                          print(f'  Clip {clip_num} OK ({w}x{h})')
-                          return url
-                      except Exception as e:
-                          print(f'  Error attempt {attempt+1}: {e}')
-                  print(f'  ERROR: Could not fetch clip {clip_num}')
-                  return None
-
-              clips = []
-              for i, query in enumerate(queries):
-                  url = get_pexels_clip(query, i + 1)
-                  if not url:
-                      at_patch(record_id, {'Status': 'fehler_clip'}); sys.exit(1)
-                  clips.append(url)
-                  time.sleep(0.3)
-              print(f'All 4 clips fetched from Pexels API')
+                          if files:
+                              clip_url = files[0]['link']
+                              w, h = files[0].get('width','?'), files[0].get('height','?')
+                              print(f'Pexels clip OK ({w}x{h})')
+                  else:
+                      print(f'Pexels HTTP {r.status_code} - using fallback clip')
+              except Exception as e:
+                  print(f'Pexels error: {e} - using fallback clip')
           else:
-              clips = FALLBACK_CLIPS
-              print(f'Using 4 fallback CDN clips (add pexels_api_key to Config for product-specific videos)')
+              print('No pexels_api_key - using fallback CDN clip (v7)')
+          print(f'Clip URL: {clip_url[:60]}...')
 
           J2V_HEADERS = {'x-api-key': J2V_API_KEY, 'Content-Type': 'application/json'}
 
-          def make_scene(clip_url):
-              return {
-                  'background-color': '#000000',
-                  'duration': -1,
-                  'elements': [{
-                      'type': 'video',
-                      'src': clip_url,
-                      'width': 1080, 'height': 1920,
-                      'x': 0, 'y': 0,
-                      'loop': -1, 'duration': -2
-                  }]
-              }
-
           def submit_j2v(audio_url, variant):
               print(f'[{time.strftime("%H:%M:%S")}] Submitting JSON2Video variant {variant}...')
+              # FIX Bug #18: audio MUST be inside the scene, not at movie level
+              # scene duration=-1 derives from the audio element within the scene
               body = {
                   'width': 1080, 'height': 1920, 'quality': 'high',
-                  'elements': [
-                      {
-                          'type': 'subtitles',
-                          'language': 'de',
-                          'settings': {
-                              'style': 'classic',
-                              'font-family': 'Montserrat',
-                              'font-size': '80',
-                              'font-weight': '700',
-                              'word-color': '#FFD700',
-                              'line-color': '#FFFFFF',
-                              'outline-color': '#000000',
-                              'outline-width': 6,
-                              'max-words-per-line': 3,
-                              'position': 'bottom-center'
+                  'elements': [{
+                      'type': 'subtitles',
+                      'language': 'de',
+                      'settings': {
+                          'style': 'classic',
+                          'font-family': 'Montserrat',
+                          'font-size': '80',
+                          'font-weight': '700',
+                          'word-color': '#FFD700',
+                          'line-color': '#FFFFFF',
+                          'outline-color': '#000000',
+                          'outline-width': 6,
+                          'max-words-per-line': 3,
+                          'position': 'bottom-center'
+                      }
+                  }],
+                  'scenes': [{
+                      'background-color': '#000000',
+                      'duration': -1,
+                      'elements': [
+                          {'type': 'audio', 'src': audio_url},
+                          {
+                              'type': 'video',
+                              'src': clip_url,
+                              'width': 1080, 'height': 1920,
+                              'x': 0, 'y': 0,
+                              'loop': -1, 'duration': -2
                           }
-                      },
-                      {'type': 'audio', 'src': audio_url}
-                  ],
-                  'scenes': [make_scene(c) for c in clips]
+                      ]
+                  }]
               }
               try:
                   r = requests.post('https://api.json2video.com/v2/movies',
