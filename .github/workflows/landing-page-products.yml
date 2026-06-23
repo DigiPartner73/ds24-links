@@ -1,0 +1,60 @@
+name: Update Landing Page Products (products.json)
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # täglich 05:00 UTC
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch products from Airtable + write products.json
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests, json, os, urllib.parse
+
+          token = os.environ['AIRTABLE_TOKEN']
+          url = 'https://api.airtable.com/v0/apppfrE10FwXz9IMY/tblm1szgXQZc0mRle'
+          params = {
+              'filterByFormula': 'AND(LEN({Affiliate_Link_Raw})>0,{Status}="veröffentlicht")',
+              'fields[]': ['Produktname', 'Affiliate_Link_Raw', 'Kategorie'],
+              'maxRecords': 50,
+          }
+          resp = requests.get(url,
+              headers={'Authorization': f'Bearer {token}'},
+              params=params, timeout=20)
+          resp.raise_for_status()
+          records = resp.json().get('records', [])
+
+          products = []
+          for r in records:
+              f = r.get('fields', {})
+              name = f.get('Produktname', '').strip()
+              link = f.get('Affiliate_Link_Raw', '').strip()
+              kat  = f.get('Kategorie', '').strip()
+              if name and link:
+                  products.append({'produktname': name, 'link': link, 'beschreibung': kat})
+
+          with open('products.json', 'w', encoding='utf-8') as fh:
+              json.dump(products, fh, ensure_ascii=False, indent=2)
+
+          print(f'{len(products)} Produkte in products.json geschrieben')
+          for p in products:
+              print(f"  - {p['produktname'][:60]}")
+          PYEOF
+
+      - name: Commit products.json
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add products.json
+          git diff --staged --quiet && echo "Keine Änderungen" || git commit -m "Auto: products.json aktualisiert [$(date -u +%Y-%m-%d)]"
+          git push

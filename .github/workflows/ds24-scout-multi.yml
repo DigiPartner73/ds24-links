@@ -2,13 +2,13 @@ name: DS24 Scout Multilingual (SA-01-DS24-Multi)
 
 on:
   schedule:
-    - cron: '30 5 * * *' # täglich 05:30 UTC (30 Min nach CB Scout)
+    - cron: '30 5 * * 1'   # wöchentlich Montags 05:30 UTC
   workflow_dispatch:
 
 jobs:
   scout:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Setup Python
@@ -19,22 +19,34 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Run DS24 Multilingual Scout
+      - name: Run DS24 Multilingual Scout with Niche Replacement
         env:
           DS24_COOKIE: ${{ secrets.DS24_COOKIE }}
           DS24_AFFILIATE_NICK: ${{ secrets.DS24_AFFILIATE_NICK }}
           MAKE_DS24_MULTI_WEBHOOK: ${{ secrets.MAKE_DS24_MULTI_WEBHOOK }}
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
         run: |
           python3 << 'PYEOF'
           import requests
+          import json
           import time
           import os
           import sys
-          from collections import Counter
 
-          DS24_COOKIE = os.environ.get('DS24_COOKIE', '')
-          AFFILIATE_NICK = os.environ.get('DS24_AFFILIATE_NICK', '')
-          WEBHOOK = os.environ.get('MAKE_DS24_MULTI_WEBHOOK', '')
+          # ─── Konfiguration ─────────────────────────────────────────────────
+          DS24_COOKIE       = os.environ.get('DS24_COOKIE', '')
+          AFFILIATE_NICK    = os.environ.get('DS24_AFFILIATE_NICK', '')
+          WEBHOOK           = os.environ.get('MAKE_DS24_MULTI_WEBHOOK', '')
+          AIRTABLE_TOKEN    = os.environ.get('AIRTABLE_TOKEN', '')
+
+          AIRTABLE_BASE_ID = 'apppfrE10FwXz9IMY'
+          AIRTABLE_TABLE_ID = 'tblm1szgXQZc0mRle'
+          MAX_PER_NISCHE = 3  # Max Produkte pro Nische
+
+          AIRTABLE_HEADERS = {
+              'Authorization': f'Bearer {AIRTABLE_TOKEN}',
+              'Content-Type': 'application/json',
+          }
 
           if not DS24_COOKIE:
               print('FEHLER: DS24_COOKIE Secret ist nicht gesetzt!')
@@ -45,6 +57,12 @@ jobs:
           if not WEBHOOK:
               print('FEHLER: MAKE_DS24_MULTI_WEBHOOK Secret ist nicht gesetzt!')
               sys.exit(1)
+          if not AIRTABLE_TOKEN:
+              print('FEHLER: AIRTABLE_TOKEN Secret ist nicht gesetzt!')
+              sys.exit(1)
+
+          # Nur nicht-deutsche Sprachen (DE wird von SA-01 v2 abgedeckt)
+          LANGUAGES = ['en', 'es', 'pt', 'fr', 'it']
 
           DS24_API = 'https://www.digistore24-app.com/v2/api/marketplace/results'
 
@@ -55,162 +73,270 @@ jobs:
               'Referer': 'https://www.digistore24-app.com/',
           }
 
+
+          # ─── Nische-Replacement Hilfsfunktionen ────────────────────────────
+          def parse_earnings(val):
+              try:
+                  return float(str(val).replace(',', '.').replace('\u20ac', '').replace(' ', '') or 0)
+              except Exception:
+                  return 0.0
+
+          def get_produkte_in_kategorie(kategorie):
+              url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}'
+              params = {
+                  'filterByFormula': f'AND({{Kategorie}}="{kategorie}",{{Status}}!="nicht_geeignet")',
+                  'fields[]': ['Produktname', 'EarningsPerSale', 'Kategorie', 'Status'],
+                  'maxRecords': 50,
+              }
+              try:
+                  resp = requests.get(url, headers=AIRTABLE_HEADERS, params=params, timeout=15)
+                  if resp.status_code == 200:
+                      return resp.json().get('records', [])
+              except Exception as e:
+                  print(f'  [AIRTABLE] Fehler: {e}')
+              return []
+
+          def set_nicht_geeignet(record_id, name):
+              url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}/{record_id}'
+              try:
+                  resp = requests.patch(url, headers=AIRTABLE_HEADERS,
+                      json={'fields': {'Status': 'nicht_geeignet'}}, timeout=15)
+                  if resp.status_code == 200:
+                      print(f'  [REPLACE] "{name}" auf nicht_geeignet gesetzt')
+                      return True
+              except Exception as e:
+                  print(f'  [REPLACE] Fehler: {e}')
+              return False
+
+          def nische_check(kategorie, new_earnings_raw):
+              """Gibt True zurueck wenn das Produkt hinzugefuegt werden soll."""
+              if not kategorie:
+                  return True
+              existing = get_produkte_in_kategorie(kategorie)
+              count = len(existing)
+              new_eps = parse_earnings(new_earnings_raw)
+              print(f'  [NISCHE] "{kategorie}": {count}/{MAX_PER_NISCHE} belegt, neues EPS={new_eps:.2f}')
+              if count < MAX_PER_NISCHE:
+                  return True
+              worst = min(existing, key=lambda r: parse_earnings(r['fields'].get('EarningsPerSale', 0)))
+              worst_eps = parse_earnings(worst['fields'].get('EarningsPerSale', 0))
+              if new_eps > worst_eps:
+                  time.sleep(0.3)
+                  return set_nicht_geeignet(worst['id'], worst['fields'].get('Produktname', '?'))
+              print(f'  [NISCHE] Neues EPS {new_eps:.2f} <= Worst {worst_eps:.2f} → skip')
+              return False
+
+          # ─── DS24 Affiliate-Link konstruieren ──────────────────────────────
           def build_affiliate_link(product_id):
               return f'https://www.digistore24.com/redir/{product_id}/{AFFILIATE_NICK}/'
 
-          def extract_products(data):
+          # ─── Produkt-Felder aus verschiedenen API-Antwortstrukturen ────────
+          def extract_products(data, language):
+              """
+              DS24 interne API-Antwortstruktur. Extrahiert Produkte aus den
+              möglichen JSON-Varianten. Beim ersten Lauf wird die Struktur
+              geloggt damit Feldnamen verifiziert werden können.
+              """
               products = []
+
+              # Mögliche Container in der DS24 API-Antwort
               candidates = []
-
-              if isinstance(data, dict) and isinstance(data.get('result'), dict):
-                  items = data['result'].get('items')
-                  if isinstance(items, list):
-                      candidates.append(items)
-                      print(f'[DEBUG] Gefunden: result.items Liste[{len(items)}]')
-
-              if not candidates:
-                  if isinstance(data, list):
-                      candidates = [data]
-                  elif isinstance(data, dict):
-                      for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
-                          val = data.get(key)
-                          if isinstance(val, list):
-                              candidates.append(val)
-                          elif isinstance(val, dict):
-                              for subkey in ['products', 'results', 'items']:
-                                  subval = val.get(subkey)
-                                  if isinstance(subval, list):
-                                      candidates.append(subval)
+              if isinstance(data, list):
+                  candidates = [data]
+              elif isinstance(data, dict):
+                  for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
+                      val = data.get(key)
+                      if isinstance(val, list):
+                          candidates.append(val)
+                      elif isinstance(val, dict):
+                          for subkey in ['products', 'results', 'items']:
+                              subval = val.get(subkey)
+                              if isinstance(subval, list):
+                                  candidates.append(subval)
 
               for candidate in candidates:
                   if not candidate:
                       continue
-                  if candidate and isinstance(candidate[0], dict):
-                      print(f'[DEBUG] Item[0] alle Keys: {list(candidate[0].keys())}')
-                      for k in ['id', 'label', 'vendorName', 'earningsPerSale', 'commission', 'commissionFix']:
-                          if k in candidate[0]:
-                              print(f'[DEBUG] Item[0].{k} = {str(candidate[0][k])[:100]}')
-
                   for item in candidate:
                       if not isinstance(item, dict):
                           continue
+
+                      # Produkt-ID (verschiedene Feldnamen probieren)
                       product_id = (
-                          item.get('id') or item.get('product_id') or
-                          item.get('productId') or item.get('offer_id') or
-                          item.get('offerId') or ''
+                          item.get('id') or
+                          item.get('product_id') or
+                          item.get('productId') or
+                          item.get('offer_id') or
+                          item.get('offerId') or
+                          ''
                       )
-                      # FIX Bug #73: label-Feld ZUERST verwenden (ist der echte Produktname in DS24)
+
+                      # Produktname
                       name = (
-                          item.get('label') or
-                          item.get('name') or item.get('title') or
-                          item.get('product_name') or item.get('productName') or
-                          item.get('offer_name') or item.get('vendorName') or ''
+                          item.get('name') or
+                          item.get('title') or
+                          item.get('product_name') or
+                          item.get('productName') or
+                          item.get('offer_name') or
+                          ''
                       )
+
+                      # Provision/Earnings
                       earnings = (
-                          item.get('earningsPerSale') or
                           item.get('earnings_per_sale') or
-                          item.get('price') or 0
-                      )
-                      # FIX: DS24 verwendet 'commission' als Provisions-Prozent
-                      commission_pct = (
+                          item.get('earningsPerSale') or
                           item.get('commission') or
-                          item.get('commission_percent') or item.get('commissionPercent') or
-                          item.get('commission_rate') or ''
+                          item.get('commission_per_sale') or
+                          item.get('affiliate_commission') or
+                          item.get('price') or
+                          0
                       )
+
+                      # Provisions-Prozentsatz
+                      commission_pct = (
+                          item.get('commission_percent') or
+                          item.get('commissionPercent') or
+                          item.get('commission_rate') or
+                          item.get('affiliate_commission_percent') or
+                          ''
+                      )
+
+                      # Kategorie
                       category = (
-                          item.get('category') or item.get('category_name') or
-                          item.get('categoryName') or item.get('type') or ''
+                          item.get('category') or
+                          item.get('category_name') or
+                          item.get('categoryName') or
+                          item.get('niche') or
+                          ''
                       )
-                      # DS24 hat kein Sprach-Feld - immer DE (Marketplace ist DE-basiert)
-                      lang_raw = 'DE'
+
                       if product_id and name:
                           products.append({
-                              'id': str(product_id), 'name': str(name),
-                              'earnings': earnings, 'commission_pct': str(commission_pct),
-                              'category': str(category), 'lang': lang_raw,
+                              'id': str(product_id),
+                              'name': str(name),
+                              'earnings': earnings,
+                              'commission_pct': str(commission_pct),
+                              'category': str(category),
                           })
+
                   if products:
-                      break
+                      break  # Erste valide Liste reicht
+
               return products
 
+          # ─── An Make.com Webhook posten ────────────────────────────────────
           def post_to_webhook(payload):
               try:
-                  res = requests.post(WEBHOOK, json=payload,
-                      headers={'Content-Type': 'application/json'}, timeout=15)
+                  res = requests.post(
+                      WEBHOOK,
+                      json=payload,
+                      headers={'Content-Type': 'application/json'},
+                      timeout=15,
+                  )
                   return res.text
               except Exception as e:
                   print(f'  Webhook-Fehler: {e}')
                   return None
 
-          print('=== DS24 Scout SA-01-DS24-Multi gestartet ===')
-          print('Fix: label-Feld als Produktname, commission als Provisions-Prozent\n')
-
-          params = {'page': 1, 'per_page': 80}
-
-          try:
-              response = requests.get(DS24_API, params=params, headers=HEADERS, timeout=20)
-          except Exception as e:
-              print(f'HTTP-Fehler: {e}')
-              sys.exit(1)
-
-          print(f'HTTP Status: {response.status_code}')
-
-          if response.status_code == 403:
-              print('FEHLER: Session-Cookie abgelaufen!')
-              sys.exit(1)
-
-          if response.status_code != 200:
-              print(f'FEHLER: Status {response.status_code}: {response.text[:500]}')
-              sys.exit(1)
-
-          try:
-              data = response.json()
-          except Exception:
-              print(f'FEHLER: Kein JSON: {response.text[:200]}')
-              sys.exit(1)
-
-          if isinstance(data, dict):
-              print(f'[DEBUG] Top-Level Keys: {list(data.keys())}')
-
-          products = extract_products(data)
-          print(f'\nGefundene Produkte: {len(products)}')
-
-          if not products:
-              print('FEHLER: Keine Produkte extrahiert.')
-              print(f'Response (erste 2000 Zeichen): {response.text[:2000]}')
-              sys.exit(1)
-
-          products.sort(
-              key=lambda p: float(str(p['earnings']).replace(',', '.').replace('€', '').strip() or 0),
-              reverse=True
-          )
-          lang_dist = Counter(p['lang'] for p in products)
-          print(f'Sprachverteilung: {dict(lang_dist)}')
-          print(f'Top 5 Produkte:')
-          for p in products[:5]:
-              print(f'  {p["name"][:50]} | {p["earnings"]} | Prov: {p["commission_pct"]}')
+          # ─── MAIN ──────────────────────────────────────────────────────────
+          print('=== DS24 Multilingual Scout SA-01-DS24-Multi gestartet ===')
+          print(f'Sprachen: {", ".join(LANGUAGES)}\n')
 
           total_posted = 0
-          for product in products[:25]:
-              affiliate_link = build_affiliate_link(product['id'])
-              payload = {
-                  'plattform': 'Digistore24',
-                  'produkt_name': product['name'],
-                  'affiliate_link': affiliate_link,
-                  'produkt_id': product['id'],
-                  'earnings': str(product['earnings']),
-                  'commission_pct': product['commission_pct'],
-                  'kategorie': product['category'],
-                  'sprache': product['lang'],
+          first_language = True
+
+          for lang in LANGUAGES:
+              print(f'\n--- Sprache: {lang.upper()} ---')
+
+              params = {
+                  'language': lang,
+                  'page': 1,
+                  'per_page': 50,
               }
-              print(f'  POST -> {product["name"][:50]} | {product["earnings"]} | {product["lang"]}')
-              result = post_to_webhook(payload)
-              if result is not None:
-                  total_posted += 1
-              time.sleep(0.8)
+
+              try:
+                  response = requests.get(
+                      DS24_API,
+                      params=params,
+                      headers=HEADERS,
+                      timeout=20,
+                  )
+              except Exception as e:
+                  print(f'  HTTP-Fehler: {e}')
+                  continue
+
+              print(f'  HTTP Status: {response.status_code}')
+
+              if response.status_code == 403:
+                  print('  FEHLER: Session-Cookie abgelaufen! Cookie erneuern und GitHub Secret aktualisieren.')
+                  print('  → make.com/ds24 → Browser Dev Tools → Cookie "ds24" kopieren → GitHub Secret DS24_COOKIE aktualisieren')
+                  sys.exit(1)
+
+              if response.status_code != 200:
+                  print(f'  WARNUNG: Unerwarteter Status {response.status_code}')
+                  print(f'  Response: {response.text[:200]}')
+                  continue
+
+              try:
+                  data = response.json()
+              except Exception:
+                  print(f'  FEHLER: Kein JSON in der Antwort: {response.text[:200]}')
+                  continue
+
+              # Beim ersten Lauf: Struktur loggen für Debugging
+              if first_language:
+                  print(f'\n  [DEBUG] Antwort-Struktur (Top-Level Keys):')
+                  if isinstance(data, dict):
+                      for k, v in data.items():
+                          vtype = type(v).__name__
+                          vlen = len(v) if isinstance(v, (list, dict)) else ''
+                          print(f'    "{k}": {vtype} {vlen}')
+                  elif isinstance(data, list):
+                      print(f'    Array mit {len(data)} Einträgen')
+                      if data:
+                          print(f'    Erstes Element Keys: {list(data[0].keys()) if isinstance(data[0], dict) else type(data[0]).__name__}')
+                  first_language = False
+
+              products = extract_products(data, lang)
+              print(f'  Gefundene Produkte: {len(products)}')
+
+              if not products:
+                  print('  WARNUNG: Keine Produkte extrahiert. Möglicherweise Cookie abgelaufen oder API-Struktur geändert.')
+                  continue
+
+              # Nach Earnings sortieren (höchste zuerst)
+              products.sort(key=lambda p: float(str(p['earnings']).replace(',', '.').replace('€', '').strip() or 0), reverse=True)
+
+              # Top 20 pro Sprache
+              for product in products[:20]:
+                  affiliate_link = build_affiliate_link(product['id'])
+
+                  payload = {
+                      'plattform':      'Digistore24',
+                      'produkt_name':   product['name'],
+                      'affiliate_link': affiliate_link,
+                      'produkt_id':     product['id'],
+                      'earnings':       str(product['earnings']),
+                      'commission_pct': product['commission_pct'],
+                      'kategorie':      product['category'],
+                      'sprache':        lang.upper(),
+                  }
+
+                  if not nische_check(product['category'], product['earnings']):
+                      continue
+                  print(f'  POST → {product["name"][:50]} | Earnings: {product["earnings"]}')
+                  result = post_to_webhook(payload)
+                  if result is not None:
+                      total_posted += 1
+
+                  time.sleep(0.8)  # Rate limiting
+
+              # Pause zwischen Sprachen
+              time.sleep(3)
 
           print(f'\n=== Scout abgeschlossen: {total_posted} Produkte gepostet ===')
+
           if total_posted == 0:
-              print('WARNUNG: 0 Produkte gepostet!')
+              print('WARNUNG: 0 Produkte gepostet! Bitte GitHub Action Log prüfen.')
               sys.exit(1)
           PYEOF
