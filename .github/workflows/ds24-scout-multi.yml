@@ -123,7 +123,7 @@ jobs:
           # ─────────────────────────────────────────────
           selected = []
           for nische, prods in nischen_buckets.items():
-              top = sorted(prods, key=lambda x: x.get("earningsPerSale", 0), reverse=True)[:TOP_N_PER_NISCHE]
+              top = sorted(prods, key=lambda x: x.get("earningsPerSale", 0), reverse=True)[:TOP_N_PER_NICHE]
               for p in top:
                   selected.append({
                       "Produktname":   p.get("label", ""),
