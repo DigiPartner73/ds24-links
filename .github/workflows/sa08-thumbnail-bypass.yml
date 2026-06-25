@@ -2,6 +2,8 @@ name: SA-08 Thumbnail Bypass
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '*/20 * * * *'
 
 jobs:
   generate-thumbnails:
