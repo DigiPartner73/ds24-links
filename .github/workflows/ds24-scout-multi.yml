@@ -138,7 +138,7 @@ jobs:
                       "Letzter_Agent": "SA-01-DS24-Multi",
                   })
 
-          print(f"\nAusgewählt: {len(selected)} Produkte ({TOP_N_PER_NISCHE} pro Nische)")
+          print(f"\nAusgewählt: {len(selected)} Produkte ({TOP_N_PER_NICHE} pro Nische)")
 
           # ─────────────────────────────────────────────
           # 6. AIRTABLE: BESTEHENDE LINKS LADEN (Dedup)
