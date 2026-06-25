@@ -131,7 +131,7 @@ jobs:
                       "Vendor":        str(p.get("vendorId", "")),
                       "EarningsPerSale": round(p.get("earningsPerSale", 0), 2),
                       "Ranking":       str(p.get("salesRank", "")),
-                      "Affiliate_Link_Raw": p.get("promoLinkUrl", ""),
+                      "Affiliate_Link_Raw": f"https://www.digistore24.com/redir/{p.get('productId', '')}/info2641/" if p.get('productId') else "",
                       "Status":        "neu_geladen",
                       "Plattform":     "Digistore24",
                       "Sprache":       "DE",
