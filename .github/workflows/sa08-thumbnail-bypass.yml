@@ -1,0 +1,149 @@
+name: SA-08 Thumbnail Bypass
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate-thumbnails:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Generate Thumbnail Prompts & Update Airtable
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import os, sys, time, json, urllib.request, urllib.error, re
+
+          AIRTABLE_TOKEN = os.environ["AIRTABLE_TOKEN"]
+          AIRTABLE_BASE  = "apppfrE10FwXz9IMY"
+          PROD_TABLE     = "tblm1szgXQZc0mRle"
+          CONFIG_TABLE   = "tblHq1P7Z7bE7hUEj"
+
+          def airtable_get(url):
+              req = urllib.request.Request(url, headers={
+                  "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                  "Accept": "application/json"
+              })
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read())
+
+          config_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{CONFIG_TABLE}?maxRecords=100"
+          config_data = airtable_get(config_url)
+          claude_key = None
+          for rec in config_data.get("records", []):
+              fields = rec.get("fields", {})
+              if fields.get("Parameter") == "claude_api_key":
+                  claude_key = fields.get("Wert")
+                  break
+
+          if not claude_key:
+              print("FEHLER: Claude API Key nicht in Airtable Config gefunden!")
+              sys.exit(1)
+          print(f"Claude API Key gefunden (endet auf ...{claude_key[-8:]})")
+
+          import urllib.parse
+          formula = urllib.parse.quote('{Status}="video_fertig"')
+          url = (f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{PROD_TABLE}"
+                 f"?filterByFormula={formula}"
+                 f"&sort[0][field]=Profit_Score&sort[0][direction]=desc"
+                 f"&maxRecords=50")
+          records_data = airtable_get(url)
+          records = records_data.get("records", [])
+          print(f"{len(records)} Records mit Status=video_fertig gefunden")
+
+          if not records:
+              print("Keine Records zu verarbeiten.")
+              sys.exit(0)
+
+          def call_claude(api_key, produktname, kategorie, hook, zielgruppe, cta_keyword):
+              prompt = (
+                  f"Erstelle einen Thumbnail-Prompt und Social Media Texte fuer dieses Affiliate-Produkt.\n\n"
+                  f"Produkt: {produktname}\n"
+                  f"Kategorie: {kategorie}\n"
+                  f"Hook: {hook}\n"
+                  f"Zielgruppe: {zielgruppe}\n"
+                  f"CTA Keyword: {cta_keyword}\n\n"
+                  f'Gib zurueck:\n'
+                  f'{{"thumbnail_prompt": "Detaillierter Bildprompt fuer ein virales Thumbnail", '
+                  f'"bildunterschrift": "Instagram Caption mit Emojis, max. 5 Saetze. Letzter Satz immer: Link in meiner Bio!", '
+                  f'"hashtags_tiktok": "#hashtag1 #hashtag2 #hashtag3", '
+                  f'"hashtags_instagram": "#hashtag1 #hashtag2 #hashtag3"}}'
+              )
+              body = json.dumps({
+                  "model": "claude-sonnet-4-5",
+                  "max_tokens": 1024,
+                  "system": "Du bist ein Experte fuer virale Social Media Thumbnails. Antworte NUR mit einem einzigen JSON-Objekt, eingeschlossen in <result> und </result> Tags. Kein Text davor oder danach.",
+                  "messages": [{"role": "user", "content": prompt}]
+              }).encode()
+              req = urllib.request.Request(
+                  "https://api.anthropic.com/v1/messages",
+                  data=body,
+                  headers={
+                      "x-api-key": api_key,
+                      "anthropic-version": "2023-06-01",
+                      "Content-Type": "application/json"
+                  }
+              )
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  resp = json.loads(r.read())
+                  text = resp["content"][0]["text"]
+                  match = re.search(r'<result>(.*?)</result>', text, re.DOTALL)
+                  if not match:
+                      raise ValueError(f"Kein result-Tag: {text[:200]}")
+                  return json.loads(match.group(1).strip())
+
+          def update_record(record_id, fields_update):
+              body = json.dumps({"fields": fields_update}).encode()
+              req = urllib.request.Request(
+                  f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{PROD_TABLE}/{record_id}",
+                  data=body,
+                  headers={
+                      "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                      "Content-Type": "application/json"
+                  },
+                  method="PATCH"
+              )
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read())
+
+          success = 0
+          errors = 0
+
+          for i, rec in enumerate(records):
+              fields = rec.get("fields", {})
+              rec_id = rec["id"]
+              name = fields.get("Produktname", "?")
+              kategorie = fields.get("Kategorie", "Online Marketing")
+              hook = fields.get("Script_Hook_A", "")
+              zielgruppe = fields.get("Zielgruppe", "")
+              cta = fields.get("CTA_Keyword", "Jetzt ansehen")
+
+              print(f"[{i+1}/{len(records)}] {name}")
+
+              try:
+                  result = call_claude(claude_key, name, kategorie, hook, zielgruppe, cta)
+                  update_record(rec_id, {
+                      "Thumbnail_Prompt":   result.get("thumbnail_prompt", ""),
+                      "Bildunterschrift":   result.get("bildunterschrift", ""),
+                      "Hashtags_TikTok":    result.get("hashtags_tiktok", ""),
+                      "Hashtags_Instagram": result.get("hashtags_instagram", ""),
+                      "Letzter_Agent":      "SA-08",
+                      "Status":             "thumbnail_fertig"
+                  })
+                  print(f"  OK thumbnail_fertig")
+                  success += 1
+              except Exception as e:
+                  print(f"  FEHLER: {e}")
+                  try:
+                      update_record(rec_id, {"Status": "fehler_thumb", "Letzter_Fehler": str(e)[:200], "Letzter_Agent": "SA-08"})
+                  except:
+                      pass
+                  errors += 1
+
+              if i < len(records) - 1:
+                  time.sleep(2)
+
+          print(f"FERTIG: {success} Records thumbnail_fertig, {errors} Fehler")
+          PYEOF
