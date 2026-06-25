@@ -1,8 +1,8 @@
-name: DS24 Scout Multilingual (SA-01-DS24-Multi)
+name: DS24 Scout – Nischen-Strategie (v2)
 
 on:
   schedule:
-    - cron: '30 5 * * 1'   # wöchentlich Montags 05:30 UTC
+    - cron: '0 7 * * *'   # täglich 07:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -11,332 +11,206 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install requests
-
-      - name: Run DS24 Multilingual Scout with Niche Replacement
+      - name: Fetch, Classify & Write DS24 Products
         env:
           DS24_COOKIE: ${{ secrets.DS24_COOKIE }}
-          DS24_AFFILIATE_NICK: ${{ secrets.DS24_AFFILIATE_NICK }}
-          MAKE_DS24_MULTI_WEBHOOK: ${{ secrets.MAKE_DS24_MULTI_WEBHOOK }}
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
         run: |
           python3 << 'PYEOF'
-          import requests
-          import json
-          import time
-          import os
-          import sys
+          import os, sys, time, math, json, urllib.request, urllib.error
 
-          # ─── Konfiguration ─────────────────────────────────────────────────
-          DS24_COOKIE       = os.environ.get('DS24_COOKIE', '')
-          AFFILIATE_NICK    = os.environ.get('DS24_AFFILIATE_NICK', '')
-          WEBHOOK           = os.environ.get('MAKE_DS24_MULTI_WEBHOOK', '')
-          AIRTABLE_TOKEN    = os.environ.get('AIRTABLE_TOKEN', '')
+          # ─────────────────────────────────────────────
+          # 1. KONFIGURATION
+          # ─────────────────────────────────────────────
+          DS24_COOKIE     = os.environ["DS24_COOKIE"]
+          AIRTABLE_TOKEN  = os.environ["AIRTABLE_TOKEN"]
+          AIRTABLE_BASE   = "apppfrE10FwXz9IMY"
+          AIRTABLE_TABLE  = "tblm1szgXQZc0mRle"
 
-          AIRTABLE_BASE_ID = 'apppfrE10FwXz9IMY'
-          AIRTABLE_TABLE_ID = 'tblm1szgXQZc0mRle'
-          MAX_PER_NISCHE = 3  # Max Produkte pro Nische
+          MAX_PAGES       = 6      # 6 × 50 = 300 Produkte
+          LIMIT_PER_PAGE  = 50
+          TOP_N_PER_NICHE = 3      # Top 3 pro Nische
 
-          AIRTABLE_HEADERS = {
-              'Authorization': f'Bearer {AIRTABLE_TOKEN}',
-              'Content-Type': 'application/json',
-          }
+          # ─────────────────────────────────────────────
+          # 2. NISCHEN-KEYWORD-MAPPING
+          # Priorität: zuerst spezifischere Nischen prüfen
+          # ─────────────────────────────────────────────
+          NISCHEN_MAP = [
+              ("Trading & Crypto",          ["trading", "börse", "aktien", "forex", "crypto", "bitcoin", "krypto", "ethereum", "coin"]),
+              ("Social Media & Influencer", ["instagram", "tiktok", "youtube", "facebook", "social media", "influencer", "follower", "reel", "shorts"]),
+              ("Email Marketing",           ["email", "newsletter", "mailing", "autoresponder", "klicktipp", "aktivecampaign", "mailchimp"]),
+              ("Software & KI",             ["software", "tool", "saas", "ki ", "künstliche intelligenz", "chatgpt", "automation", "wordpress", "app ", "plugin"]),
+              ("Health & Fitness",          ["health", "fitness", "gesundheit", "abnehmen", "gewicht", "keto", "diet", "schlank", "yoga", "workout", "detox", "tinnitus", "rücken", "schmerz", "medizin", "heilung", "blut", "herz"]),
+              ("Dating & Relationships",    ["dating", "beziehung", "partnerschaft", "flirten", "liebe", "romantik", "frauen", "männer", "verführung", "erotik"]),
+              ("Personal Development",      ["mindset", "persönlichkeit", "motivation", "coaching", "nlp", "hypnose", "erfolg", "mindfulness", "potential", "gewohnheit", "subliminal", "denken", "selbst", "charakter"]),
+              ("Spirituality",              ["spirituell", "esoterik", "chakra", "energie", "tarot", "astrologie", "bewusstsein", "meditation", "mystik", "magie"]),
+              ("Business & Investment",     ["business", "investment", "vermögen", "finanzen", "cash", "money", "geld verdienen", "einkommen", "reich", "passiv", "immobilien"]),
+              ("Online Marketing",          ["marketing", "ecommerce", "affiliate", "funnel", "traffic", "copywriting", "werbe", "verkauf", "conversion", "leads", "amazon fba", "shopify", "dropshipping", "e-business", "online business"]),
+              ("Education & Courses",       ["lernen", "kurs", "training", "prüfung", "studium", "zertifikat", "nachhilfe", "schule", "abitur"]),
+              ("Languages",                 ["sprache", "english", "englisch", "französisch", "spanisch", "sprachkurs", "vokabel"]),
+              ("Photography & Film",        ["foto", "film", "video", "kamera", "fotografie", "videografie", "schnitt"]),
+              ("Animals & Pets",            ["hund", "katze", "tier", "pet", "pferd", "aquarium", "vogel"]),
+              ("Family & Children",         ["familie", "kinder", "eltern", "erziehung", "baby", "schwangerschaft", "scheidung"]),
+              ("Food & Cooking",            ["essen", "kochen", "rezept", "backen", "food", "küche", "ernährung", "vegan", "vegetarisch"]),
+              ("Hobby & Craft",             ["hobby", "gitarre", "musik instrument", "malen", "zeichnen", "basteln", "kreativ", "kunst", "stricken"]),
+              ("Travel",                    ["reise", "travel", "urlaub", "fernweh", "backpacking", "camping"]),
+              ("Sport",                     ["sport", "fußball", "tennis", "golf", "laufen", "marathon", "triathlon", "fitness kurs"]),
+              ("Home & Garden",             ["haus", "garten", "wohnen", "renovieren", "heimwerk", "deko", "einrichten"]),
+              ("Law & Taxes",               ["recht", "anwalt", "steuer", "finanzamt", "gesetz", "mietrecht", "arbeitsrecht"]),
+              ("Survival & Prepping",       ["survival", "prepper", "notfall", "bushcraft", "krisenvorsorge"]),
+              ("Green & Sustainability",    ["umwelt", "nachhaltig", "bio", "green", "solar", "energie sparen"]),
+              ("Betting Systems",           ["wetten", "sportwetten", "lotto", "casino"]),
+              ("Fun & Games",               ["spiel", "game", "quiz", "spaß", "gaming"]),
+              ("Dancing & Music",           ["tanz", "gitarre", "klavier", "singen", "gesang", "musik machen"]),
+              ("Fashion & Style",           ["mode", "fashion", "kleidung", "styling", "outfit"]),
+              ("Computer & IT",             ["computer", "internet", "it", "programmieren", "coding", "hacking", "cyber", "web"]),
+              ("Profession & Job",          ["karriere", "job", "beruf", "bewerbung", "gehalt", "freelance", "selbständig"]),
+              ("Hotels & Gastronomy",       ["hotel", "restaurant", "gastro", "catering"]),
+              ("Politics & Economy",        ["politik", "wirtschaft", "demokratie"]),
+              ("Fiction & Literature",      ["roman", "buch", "ebook", "fiction", "literatur", "krimi"]),
+              ("Sonstige",                  []),   # Fallback
+          ]
 
-          if not DS24_COOKIE:
-              print('FEHLER: DS24_COOKIE Secret ist nicht gesetzt!')
-              sys.exit(1)
-          if not AFFILIATE_NICK:
-              print('FEHLER: DS24_AFFILIATE_NICK Secret ist nicht gesetzt!')
-              sys.exit(1)
-          if not WEBHOOK:
-              print('FEHLER: MAKE_DS24_MULTI_WEBHOOK Secret ist nicht gesetzt!')
-              sys.exit(1)
-          if not AIRTABLE_TOKEN:
-              print('FEHLER: AIRTABLE_TOKEN Secret ist nicht gesetzt!')
-              sys.exit(1)
+          def classify_product(label: str, description: str = "") -> str:
+              text = (label + " " + description).lower()
+              for nische, keywords in NISCHEN_MAP:
+                  if any(kw in text for kw in keywords):
+                      return nische
+              return "Sonstige"
 
-          # Nur nicht-deutsche Sprachen (DE wird von SA-01 v2 abgedeckt)
-          LANGUAGES = ['en', 'es', 'pt', 'fr', 'it']
-
-          DS24_API = 'https://www.digistore24-app.com/v2/api/marketplace/results'
-
-          HEADERS = {
-              'Cookie': f'ds24={DS24_COOKIE}',
-              'Accept': 'application/json',
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Referer': 'https://www.digistore24-app.com/',
-          }
-
-
-          # ─── Nische-Replacement Hilfsfunktionen ────────────────────────────
-          def parse_earnings(val):
+          # ─────────────────────────────────────────────
+          # 3. DS24 PRODUKTE LADEN (6 Seiten × 50 = 300)
+          # ─────────────────────────────────────────────
+          def ds24_fetch(page: int, limit: int = 50) -> list:
+              url = f"https://www.digistore24-app.com/v2/api/marketplace/results?limit={limit}&page={page}"
+              req = urllib.request.Request(url, headers={
+                  "Cookie": f"ds24={DS24_COOKIE}",
+                  "Accept": "application/json"
+              })
               try:
-                  return float(str(val).replace(',', '.').replace('\u20ac', '').replace(' ', '') or 0)
-              except Exception:
-                  return 0.0
-
-          def get_produkte_in_kategorie(kategorie):
-              url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}'
-              params = {
-                  'filterByFormula': f'AND({{Kategorie}}="{kategorie}",{{Status}}!="nicht_geeignet")',
-                  'fields[]': ['Produktname', 'EarningsPerSale', 'Kategorie', 'Status'],
-                  'maxRecords': 50,
-              }
-              try:
-                  resp = requests.get(url, headers=AIRTABLE_HEADERS, params=params, timeout=15)
-                  if resp.status_code == 200:
-                      return resp.json().get('records', [])
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      data = json.loads(r.read())
+                      return data.get("result", {}).get("items", [])
               except Exception as e:
-                  print(f'  [AIRTABLE] Fehler: {e}')
-              return []
+                  print(f"  Fehler Seite {page}: {e}")
+                  return []
 
-          def set_nicht_geeignet(record_id, name):
-              url = f'https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_ID}/{record_id}'
+          all_products = []
+          for page in range(1, MAX_PAGES + 1):
+              items = ds24_fetch(page)
+              all_products.extend(items)
+              print(f"  Seite {page}: {len(items)} Produkte geladen")
+              if len(items) < LIMIT_PER_PAGE:
+                  break
+              time.sleep(0.5)
+
+          print(f"\nGesamt geladen: {len(all_products)} Produkte")
+
+          # ─────────────────────────────────────────────
+          # 4. NISCHEN-KLASSIFIZIERUNG
+          # ─────────────────────────────────────────────
+          nischen_buckets: dict[str, list] = {}
+          for p in all_products:
+              nische = classify_product(p.get("label", ""), p.get("description", ""))
+              nischen_buckets.setdefault(nische, []).append(p)
+
+          print(f"\nNischen-Verteilung:")
+          for n, prods in sorted(nischen_buckets.items(), key=lambda x: -len(x[1])):
+              print(f"  {n}: {len(prods)} Produkte")
+
+          # ─────────────────────────────────────────────
+          # 5. TOP 3 PRO NISCHE (nach EarningsPerSale)
+          # ─────────────────────────────────────────────
+          selected = []
+          for nische, prods in nischen_buckets.items():
+              top = sorted(prods, key=lambda x: x.get("earningsPerSale", 0), reverse=True)[:TOP_N_PER_NISCHE]
+              for p in top:
+                  selected.append({
+                      "Produktname":   p.get("label", ""),
+                      "Kategorie":     nische,
+                      "Vendor":        str(p.get("vendorId", "")),
+                      "EarningsPerSale": round(p.get("earningsPerSale", 0), 2),
+                      "Ranking":       str(p.get("salesRank", "")),
+                      "Affiliate_Link_Raw": p.get("promoLinkUrl", ""),
+                      "Status":        "neu_geladen",
+                      "Plattform":     "Digistore24",
+                      "Sprache":       "DE",
+                      "Letzter_Agent": "SA-01-DS24-Multi",
+                  })
+
+          print(f"\nAusgewählt: {len(selected)} Produkte ({TOP_N_PER_NISCHE} pro Nische)")
+
+          # ─────────────────────────────────────────────
+          # 6. AIRTABLE: BESTEHENDE LINKS LADEN (Dedup)
+          # ─────────────────────────────────────────────
+          def airtable_get(url: str) -> dict:
+              req = urllib.request.Request(url, headers={
+                  "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                  "Accept": "application/json"
+              })
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.loads(r.read())
+
+          existing_links = set()
+          offset = None
+          while True:
+              url = f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{AIRTABLE_TABLE}?fields[]=Affiliate_Link_Raw&pageSize=100"
+              if offset:
+                  url += f"&offset={offset}"
+              data = airtable_get(url)
+              for rec in data.get("records", []):
+                  link = rec.get("fields", {}).get("Affiliate_Link_Raw", "")
+                  if link:
+                      existing_links.add(link.strip())
+              offset = data.get("offset")
+              if not offset:
+                  break
+              time.sleep(0.2)
+
+          print(f"\nBestehende Links in Airtable: {len(existing_links)}")
+
+          # ─────────────────────────────────────────────
+          # 7. NEUE PRODUKTE FILTERN
+          # ─────────────────────────────────────────────
+          new_products = [
+              p for p in selected
+              if p["Affiliate_Link_Raw"] and p["Affiliate_Link_Raw"].strip() not in existing_links
+          ]
+          print(f"Neue Produkte (noch nicht in Airtable): {len(new_products)}")
+
+          # ─────────────────────────────────────────────
+          # 8. IN AIRTABLE SCHREIBEN (Batch à 10)
+          # ─────────────────────────────────────────────
+          def airtable_create_batch(records: list) -> int:
+              payload = json.dumps({"records": [{"fields": r} for r in records]}).encode()
+              req = urllib.request.Request(
+                  f"https://api.airtable.com/v0/{AIRTABLE_BASE}/{AIRTABLE_TABLE}",
+                  data=payload,
+                  headers={
+                      "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                      "Content-Type": "application/json"
+                  },
+                  method="POST"
+              )
               try:
-                  resp = requests.patch(url, headers=AIRTABLE_HEADERS,
-                      json={'fields': {'Status': 'nicht_geeignet'}}, timeout=15)
-                  if resp.status_code == 200:
-                      print(f'  [REPLACE] "{name}" auf nicht_geeignet gesetzt')
-                      return True
-              except Exception as e:
-                  print(f'  [REPLACE] Fehler: {e}')
-              return False
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      result = json.loads(r.read())
+                      return len(result.get("records", []))
+              except urllib.error.HTTPError as e:
+                  print(f"  Airtable Fehler {e.code}: {e.read().decode()}")
+                  return 0
 
-          def nische_check(kategorie, new_earnings_raw):
-              """Gibt True zurueck wenn das Produkt hinzugefuegt werden soll."""
-              if not kategorie:
-                  return True
-              existing = get_produkte_in_kategorie(kategorie)
-              count = len(existing)
-              new_eps = parse_earnings(new_earnings_raw)
-              print(f'  [NISCHE] "{kategorie}": {count}/{MAX_PER_NISCHE} belegt, neues EPS={new_eps:.2f}')
-              if count < MAX_PER_NISCHE:
-                  return True
-              worst = min(existing, key=lambda r: parse_earnings(r['fields'].get('EarningsPerSale', 0)))
-              worst_eps = parse_earnings(worst['fields'].get('EarningsPerSale', 0))
-              if new_eps > worst_eps:
-                  time.sleep(0.3)
-                  return set_nicht_geeignet(worst['id'], worst['fields'].get('Produktname', '?'))
-              print(f'  [NISCHE] Neues EPS {new_eps:.2f} <= Worst {worst_eps:.2f} → skip')
-              return False
+          created = 0
+          batch_size = 10
+          for i in range(0, len(new_products), batch_size):
+              batch = new_products[i:i + batch_size]
+              n = airtable_create_batch(batch)
+              created += n
+              print(f"  Batch {i//batch_size + 1}: {n} Records erstellt")
+              time.sleep(0.3)
 
-          # ─── DS24 Affiliate-Link konstruieren ──────────────────────────────
-          def build_affiliate_link(product_id):
-              return f'https://www.digistore24.com/redir/{product_id}/{AFFILIATE_NICK}/'
+          print(f"\n✅ Fertig: {created} neue Produkte in Airtable geschrieben")
+          if not new_products:
+              print("ℹ️  Alle Top-Produkte sind bereits in Airtable — kein Handlungsbedarf")
 
-          # ─── Produkt-Felder aus verschiedenen API-Antwortstrukturen ────────
-          def extract_products(data, language):
-              """
-              DS24 interne API-Antwortstruktur. Extrahiert Produkte aus den
-              möglichen JSON-Varianten. Beim ersten Lauf wird die Struktur
-              geloggt damit Feldnamen verifiziert werden können.
-              """
-              products = []
-
-              # Mögliche Container in der DS24 API-Antwort
-              candidates = []
-              if isinstance(data, list):
-                  candidates = [data]
-              elif isinstance(data, dict):
-                  for key in ['products', 'results', 'data', 'items', 'marketplace', 'offers']:
-                      val = data.get(key)
-                      if isinstance(val, list):
-                          candidates.append(val)
-                      elif isinstance(val, dict):
-                          for subkey in ['products', 'results', 'items']:
-                              subval = val.get(subkey)
-                              if isinstance(subval, list):
-                                  candidates.append(subval)
-
-              for candidate in candidates:
-                  if not candidate:
-                      continue
-                  for item in candidate:
-                      if not isinstance(item, dict):
-                          continue
-
-                      # Produkt-ID (verschiedene Feldnamen probieren)
-                      product_id = (
-                          item.get('id') or
-                          item.get('product_id') or
-                          item.get('productId') or
-                          item.get('offer_id') or
-                          item.get('offerId') or
-                          ''
-                      )
-
-                      # Produktname
-                      name = (
-                          item.get('name') or
-                          item.get('title') or
-                          item.get('product_name') or
-                          item.get('productName') or
-                          item.get('offer_name') or
-                          ''
-                      )
-
-                      # Provision/Earnings
-                      earnings = (
-                          item.get('earnings_per_sale') or
-                          item.get('earningsPerSale') or
-                          item.get('commission') or
-                          item.get('commission_per_sale') or
-                          item.get('affiliate_commission') or
-                          item.get('price') or
-                          0
-                      )
-
-                      # Provisions-Prozentsatz
-                      commission_pct = (
-                          item.get('commission_percent') or
-                          item.get('commissionPercent') or
-                          item.get('commission_rate') or
-                          item.get('affiliate_commission_percent') or
-                          ''
-                      )
-
-                      # Kategorie
-                      category = (
-                          item.get('category') or
-                          item.get('category_name') or
-                          item.get('categoryName') or
-                          item.get('niche') or
-                          ''
-                      )
-
-                      if product_id and name:
-                          products.append({
-                              'id': str(product_id),
-                              'name': str(name),
-                              'earnings': earnings,
-                              'commission_pct': str(commission_pct),
-                              'category': str(category),
-                          })
-
-                  if products:
-                      break  # Erste valide Liste reicht
-
-              return products
-
-          # ─── An Make.com Webhook posten ────────────────────────────────────
-          def post_to_webhook(payload):
-              try:
-                  res = requests.post(
-                      WEBHOOK,
-                      json=payload,
-                      headers={'Content-Type': 'application/json'},
-                      timeout=15,
-                  )
-                  return res.text
-              except Exception as e:
-                  print(f'  Webhook-Fehler: {e}')
-                  return None
-
-          # ─── MAIN ──────────────────────────────────────────────────────────
-          print('=== DS24 Multilingual Scout SA-01-DS24-Multi gestartet ===')
-          print(f'Sprachen: {", ".join(LANGUAGES)}\n')
-
-          total_posted = 0
-          first_language = True
-
-          for lang in LANGUAGES:
-              print(f'\n--- Sprache: {lang.upper()} ---')
-
-              params = {
-                  'language': lang,
-                  'page': 1,
-                  'per_page': 50,
-              }
-
-              try:
-                  response = requests.get(
-                      DS24_API,
-                      params=params,
-                      headers=HEADERS,
-                      timeout=20,
-                  )
-              except Exception as e:
-                  print(f'  HTTP-Fehler: {e}')
-                  continue
-
-              print(f'  HTTP Status: {response.status_code}')
-
-              if response.status_code == 403:
-                  print('  FEHLER: Session-Cookie abgelaufen! Cookie erneuern und GitHub Secret aktualisieren.')
-                  print('  → make.com/ds24 → Browser Dev Tools → Cookie "ds24" kopieren → GitHub Secret DS24_COOKIE aktualisieren')
-                  sys.exit(1)
-
-              if response.status_code != 200:
-                  print(f'  WARNUNG: Unerwarteter Status {response.status_code}')
-                  print(f'  Response: {response.text[:200]}')
-                  continue
-
-              try:
-                  data = response.json()
-              except Exception:
-                  print(f'  FEHLER: Kein JSON in der Antwort: {response.text[:200]}')
-                  continue
-
-              # Beim ersten Lauf: Struktur loggen für Debugging
-              if first_language:
-                  print(f'\n  [DEBUG] Antwort-Struktur (Top-Level Keys):')
-                  if isinstance(data, dict):
-                      for k, v in data.items():
-                          vtype = type(v).__name__
-                          vlen = len(v) if isinstance(v, (list, dict)) else ''
-                          print(f'    "{k}": {vtype} {vlen}')
-                  elif isinstance(data, list):
-                      print(f'    Array mit {len(data)} Einträgen')
-                      if data:
-                          print(f'    Erstes Element Keys: {list(data[0].keys()) if isinstance(data[0], dict) else type(data[0]).__name__}')
-                  first_language = False
-
-              products = extract_products(data, lang)
-              print(f'  Gefundene Produkte: {len(products)}')
-
-              if not products:
-                  print('  WARNUNG: Keine Produkte extrahiert. Möglicherweise Cookie abgelaufen oder API-Struktur geändert.')
-                  continue
-
-              # Nach Earnings sortieren (höchste zuerst)
-              products.sort(key=lambda p: float(str(p['earnings']).replace(',', '.').replace('€', '').strip() or 0), reverse=True)
-
-              # Top 20 pro Sprache
-              for product in products[:20]:
-                  affiliate_link = build_affiliate_link(product['id'])
-
-                  payload = {
-                      'plattform':      'Digistore24',
-                      'produkt_name':   product['name'],
-                      'affiliate_link': affiliate_link,
-                      'produkt_id':     product['id'],
-                      'earnings':       str(product['earnings']),
-                      'commission_pct': product['commission_pct'],
-                      'kategorie':      product['category'],
-                      'sprache':        lang.upper(),
-                  }
-
-                  if not nische_check(product['category'], product['earnings']):
-                      continue
-                  print(f'  POST → {product["name"][:50]} | Earnings: {product["earnings"]}')
-                  result = post_to_webhook(payload)
-                  if result is not None:
-                      total_posted += 1
-
-                  time.sleep(0.8)  # Rate limiting
-
-              # Pause zwischen Sprachen
-              time.sleep(3)
-
-          print(f'\n=== Scout abgeschlossen: {total_posted} Produkte gepostet ===')
-
-          if total_posted == 0:
-              print('WARNUNG: 0 Produkte gepostet! Bitte GitHub Action Log prüfen.')
-              sys.exit(1)
           PYEOF
