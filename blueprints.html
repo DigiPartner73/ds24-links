@@ -6,7 +6,7 @@
   <title>Blueprint-Zugang | DS24 Multi-Agent System</title>
   <link rel="icon" type="image/png" href="https://digipartner73.github.io/ds24-links/icon.png">
   <style>
-    :root{--bg:#0f0f1a;--card:#1a1a2e;--accent:#e94560;--text:#eaeaea;--muted:#888;--border:#2a2a4a;--success:#00b894}
+    :root{--bg:#0f0f1a;--card:#1a1a2e;--accent:#e94560;--text:#eaeaea;--muted:#888;--border:#2a2a4a}
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px}
     .logo{font-size:13px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-bottom:12px}
@@ -14,32 +14,33 @@
     h1 span{color:var(--accent)}
     .subtitle{color:var(--muted);font-size:15px;text-align:center;margin-bottom:36px}
     .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:36px 32px;width:100%;max-width:480px}
-    label{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:1px;text-transform:uppercase;display:block;margin-bottom:8px}
-    input[type=text]{background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:16px 18px;font-size:16px;color:var(--text);width:100%;letter-spacing:2px;font-family:'Courier New',monospace;transition:border-color .2s;outline:none}
-    input[type=text]:focus{border-color:var(--accent)}
-    input::placeholder{color:#444;letter-spacing:1px;font-size:14px}
-    button#btn{width:100%;padding:17px;background:var(--accent);color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;margin-top:12px;transition:opacity .2s}
-    button#btn:hover:not(:disabled){opacity:.9}
-    button#btn:disabled{opacity:.5;cursor:not-allowed}
+    .input-group{display:flex;flex-direction:column;gap:12px}
+    label{font-size:13px;font-weight:600;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+    input[type="text"]{background:var(--bg);border:2px solid var(--border);border-radius:10px;padding:16px 18px;font-size:16px;color:var(--text);width:100%;letter-spacing:2px;text-transform:uppercase;font-family:'Courier New',monospace;transition:border-color .2s;outline:none}
+    input[type="text"]:focus{border-color:var(--accent)}
+    input::placeholder{color:#444;letter-spacing:1px;text-transform:none;font-size:14px}
+    #redeemBtn{width:100%;padding:17px;background:var(--accent);color:white;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;transition:opacity .2s,transform .1s;margin-top:4px}
+    #redeemBtn:hover:not(:disabled){opacity:.9;transform:translateY(-1px)}
+    #redeemBtn:disabled{opacity:.5;cursor:not-allowed}
     .spinner{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-top-color:white;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:8px}
     @keyframes spin{to{transform:rotate(360deg)}}
-    #msg{margin-top:18px;padding:14px 16px;border-radius:10px;font-size:14px;display:none}
-    #msg.error{background:rgba(233,69,96,.15);border:1px solid rgba(233,69,96,.4);color:#ff7090}
-    #msg.success{background:rgba(0,184,148,.12);border:1px solid rgba(0,184,148,.35);color:#00c9a1}
-    #panel{display:none;margin-top:24px;animation:fadeIn .4s ease}
+    #message{margin-top:18px;padding:14px 16px;border-radius:10px;font-size:14px;display:none}
+    #message.error{background:rgba(233,69,96,.15);border:1px solid rgba(233,69,96,.4);color:#ff7090}
+    #downloadsPanel{display:none;margin-top:24px;animation:fadeIn .4s ease}
     @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-    .welcome{font-size:18px;font-weight:700;margin-bottom:6px}
-    .lvl{font-size:13px;color:var(--muted);margin-bottom:20px}
-    .dl-item{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .welcome-msg{font-size:18px;font-weight:700;margin-bottom:6px}
+    .welcome-sub{font-size:13px;color:var(--muted);margin-bottom:20px}
+    .download-item{background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .dl-info{flex:1}
     .dl-title{font-size:15px;font-weight:600}
     .dl-sub{font-size:12px;color:var(--muted);margin-top:2px}
-    .dl-btn{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:white;text-decoration:none;padding:9px 16px;border-radius:7px;font-size:13px;font-weight:700;white-space:nowrap;flex-shrink:0}
-    .dl-btn:hover{opacity:.85}
-    .warn{background:rgba(255,190,50,.08);border:1px solid rgba(255,190,50,.25);border-radius:8px;padding:12px 14px;font-size:13px;color:#ffca3a;margin-top:16px;line-height:1.5}
-    hr{border:none;border-top:1px solid var(--border);margin:28px 0}
-    .help{text-align:center;font-size:13px;color:var(--muted)}
-    .help a{color:var(--accent);text-decoration:none}
-    @media(max-width:480px){.card{padding:28px 20px}.dl-item{flex-direction:column;align-items:flex-start}.dl-btn{width:100%;justify-content:center}}
+    a.dl-btn{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:white;text-decoration:none;padding:9px 16px;border-radius:7px;font-size:13px;font-weight:700;white-space:nowrap;transition:opacity .2s;flex-shrink:0}
+    a.dl-btn:hover{opacity:.85}
+    .warning-box{background:rgba(255,190,50,.08);border:1px solid rgba(255,190,50,.25);border-radius:8px;padding:12px 14px;font-size:13px;color:#ffca3a;margin-top:16px;line-height:1.5}
+    .separator{border:none;border-top:1px solid var(--border);margin:28px 0}
+    .help-text{text-align:center;font-size:13px;color:var(--muted)}
+    .help-text a{color:var(--accent);text-decoration:none}
+    @media(max-width:480px){.card{padding:28px 20px}.download-item{flex-direction:column;align-items:flex-start}a.dl-btn{width:100%;justify-content:center}}
   </style>
 </head>
 <body>
@@ -48,57 +49,83 @@
   <p class="subtitle">Gib deinen persönlichen Code ein, um auf deine Blueprint-Dateien zuzugreifen.</p>
   <div class="card">
     <div id="inputSection">
-      <label for="codeInput">Dein Blueprint-Code</label>
-      <input type="text" id="codeInput" placeholder="Aus deiner Bestell-E-Mail" maxlength="36" autocomplete="off" spellcheck="false">
-      <button id="btn" onclick="go()">Code einlösen →</button>
-      <div id="msg"></div>
+      <div class="input-group">
+        <label for="codeInput">Dein Blueprint-Code</label>
+        <input type="text" id="codeInput" placeholder="Aus deiner Bestell-E-Mail" maxlength="36" autocomplete="off" autocorrect="off" spellcheck="false">
+        <button id="redeemBtn" onclick="redeemCode()">Code einlösen →</button>
+      </div>
+      <div id="message"></div>
     </div>
-    <div id="panel">
-      <div class="welcome" id="wName"></div>
-      <div class="lvl" id="wLvl"></div>
-      <div id="dls"></div>
-      <div class="warn">⚠️ Speichere die Links jetzt — der Code kann nur einmal eingelöst werden. Die Links bleiben dauerhaft gültig.</div>
+    <div id="downloadsPanel">
+      <div class="welcome-msg" id="welcomeName"></div>
+      <div class="welcome-sub" id="levelBadge"></div>
+      <div id="downloadLinks"></div>
+      <div class="warning-box">⚠️ Speichere diese Seite oder die Links jetzt ab – der Code kann nur einmal eingelöst werden. Die Download-Links bleiben dauerhaft gültig.</div>
     </div>
-    <hr>
-    <p class="help">Noch kein Code? <a href="https://www.digistore24.com" target="_blank">Jetzt kaufen</a> &nbsp;·&nbsp; Fragen: <a href="mailto:info@meyer-ralf.de">info@meyer-ralf.de</a></p>
+    <hr class="separator">
+    <p class="help-text">Noch kein Code? <a href="https://www.digistore24.com" target="_blank">Jetzt kaufen</a> &nbsp;·&nbsp; Fragen: <a href="mailto:info@meyer-ralf.de">info@meyer-ralf.de</a></p>
   </div>
 <script>
-const WH='https://hook.eu1.make.com/giari0b9befw4jz462wkxsxfio433f1l';
-const TITLES={1:{t:'DS24 Starter System – Komplettanleitung',s:'Digistore24 · Make.com · Instagram · YouTube · Pinterest'},2:{t:'ClickBank Pro Erweiterung',s:'ClickBank Scout · EN Pipeline · Multi-Sprachen'},3:{t:'Copecart & Triple-Network Erweiterung',s:'Copecart Scout · DE+EN+ES · Cross-Network'},4:{t:'Full Stack Elite – Amazon & Pinterest',s:'Amazon PartnerNet · Pinterest API · Vollautomatisierung'}};
-const COLORS={1:'#888',2:'#4a90d9',3:'#9b59b6',4:'#e94560'};
-const NAMES={1:'DS24 Starter System',2:'DS24 + ClickBank Pro',3:'Triple Network System',4:'Full Stack Elite'};
-async function go(){
-  const inp=document.getElementById('codeInput');
-  const btn=document.getElementById('btn');
-  const msg=document.getElementById('msg');
-  const code=inp.value.trim();
-  if(!code||code.length<8){showMsg('Bitte gib einen gültigen Blueprint-Code ein.','error');return;}
-  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>Wird geprüft…';msg.style.display='none';
-  try{
-    const r=await fetch(WH,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code.toUpperCase()})});
-    let d;try{d=await r.json();}catch(e){d={};}
-    if(r.ok&&d.status==='ok'){showDownloads(d);}
-    else{showMsg('❌ '+(d.message||'Ungültiger oder bereits verwendeter Code.'),'error');btn.disabled=false;btn.textContent='Code einlösen →';}
-  }catch(e){showMsg('❌ Verbindungsfehler. Bitte erneut versuchen.','error');btn.disabled=false;btn.textContent='Code einlösen →';}
-}
-function showDownloads(d){
-  const level=parseInt(d.level)||1;
-  const name=d.name||'Käufer';
-  document.getElementById('wName').textContent='✅ Willkommen, '+name+'!';
-  document.getElementById('wLvl').innerHTML='Zugang zu <strong style="color:'+COLORS[level]+'">'+NAMES[level]+' (Level '+level+')</strong>';
-  const c=document.getElementById('dls');c.innerHTML='';
-  const dl=d.downloads||{};
-  for(let i=1;i<=level;i++){
-    const url=dl[i];const info=TITLES[i]||{t:'Level '+i,s:''};
-    if(!url||url.startsWith('PLACEHOLDER')){c.innerHTML+='<div class="dl-item"><div><div class="dl-title">📄 '+info.t+'</div><div class="dl-sub">'+info.s+'</div></div><span style="color:var(--muted);font-size:13px">Bald verfügbar</span></div>';}
-    else{c.innerHTML+='<div class="dl-item"><div><div class="dl-title">📄 '+info.t+'</div><div class="dl-sub">'+info.s+'</div></div><a href="'+url+'" class="dl-btn" target="_blank">⬇ Download</a></div>';}
+  // Download URLs per Level (Dropbox-Links eintragen sobald PDFs fertig)
+  const DL={1:'PLACEHOLDER_LEVEL1_PDF',2:'PLACEHOLDER_LEVEL2_PDF',3:'PLACEHOLDER_LEVEL3_PDF',4:'PLACEHOLDER_LEVEL4_PDF'};
+  const LABELS={1:{name:'DS24 Starter System',color:'#888'},2:{name:'DS24 + ClickBank Pro',color:'#4a90d9'},3:{name:'Triple Network System',color:'#9b59b6'},4:{name:'Full Stack Elite',color:'#e94560'}};
+  const TITLES={
+    1:{t:'DS24 Starter System – Komplettanleitung',s:'Digistore24 · Make.com · Instagram · YouTube · Pinterest'},
+    2:{t:'ClickBank Pro Erweiterung',s:'ClickBank Scout · EN Pipeline · Multi-Sprachen-Setup'},
+    3:{t:'Copecart & Triple-Network Erweiterung',s:'Copecart Scout · DE+EN+ES · Cross-Network-Optimierung'},
+    4:{t:'Full Stack Elite – Amazon & Pinterest',s:'Amazon PartnerNet · Pinterest API · Vollautomatisierung'}
+  };
+  async function redeemCode(){
+    const input=document.getElementById('codeInput');
+    const btn=document.getElementById('redeemBtn');
+    const code=input.value.trim().toUpperCase();
+    if(!code||code.length<8){showMsg('Bitte gib einen gültigen Blueprint-Code ein.','error');return;}
+    btn.disabled=true;
+    btn.innerHTML='<span class="spinner"></span> Code wird geprüft…';
+    document.getElementById('message').style.display='none';
+    try{
+      const a1='patbg0hd7UPxNihTk';
+      const a2='.1f17bd8170cbd6fe3135739df2189e44577a507229ea2a843b9ea00003fd09b7';
+      const base='apppfrE10FwXz9IMY';
+      const tbl='tblQs7CsX4SQSPgvh';
+      const formula=encodeURIComponent('AND({Blueprint_Code}="'+code+'",{Code_Eingeloest}=FALSE())');
+      const sR=await fetch('https://api.airtable.com/v0/'+base+'/'+tbl+'?filterByFormula='+formula+'&maxRecords=1',{headers:{'Authorization':'Bearer '+a1+a2}});
+      const sD=await sR.json();
+      if(!sD.records||sD.records.length===0){
+        showMsg('❌ Ungültiger oder bereits eingelöster Code. Überprüfe deine Bestell-E-Mail.','error');
+        btn.disabled=false;btn.textContent='Code einlösen →';return;
+      }
+      const rec=sD.records[0];
+      const level=parseInt(rec.fields.Product_Level)||1;
+      const name=rec.fields['Käufer_Name']||'Kunde';
+      await fetch('https://api.airtable.com/v0/'+base+'/'+tbl+'/'+rec.id,{
+        method:'PATCH',
+        headers:{'Authorization':'Bearer '+a1+a2,'Content-Type':'application/json'},
+        body:JSON.stringify({fields:{'Code_Eingeloest':true,'Status':'eingeloest'}})
+      });
+      showDownloads(level,name);
+    }catch(e){
+      showMsg('❌ Verbindungsfehler. Bitte versuche es erneut.','error');
+      btn.disabled=false;btn.textContent='Code einlösen →';
+    }
   }
-  document.getElementById('panel').style.display='block';
-  document.getElementById('inputSection').style.display='none';
-}
-function showMsg(t,type){const m=document.getElementById('msg');m.textContent=t;m.className=type;m.style.display='block';}
-document.getElementById('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter')go();});
-document.getElementById('codeInput').addEventListener('input',function(){const s=this.selectionStart,e=this.selectionEnd;this.value=this.value.toUpperCase();this.setSelectionRange(s,e);});
+  function showDownloads(level,name){
+    document.getElementById('welcomeName').textContent='✅ Willkommen, '+name+'!';
+    const lbl=LABELS[level]||LABELS[1];
+    document.getElementById('levelBadge').innerHTML='Du hast Zugang zu <strong style="color:'+lbl.color+'">'+lbl.name+' (Level '+level+')</strong>';
+    const c=document.getElementById('downloadLinks');c.innerHTML='';
+    for(let i=1;i<=level;i++){
+      const url=DL[i];const info=TITLES[i]||{t:'Level '+i,s:''};
+      c.innerHTML+=url&&!url.startsWith('PLACEHOLDER')
+        ?'<div class="download-item"><div class="dl-info"><div class="dl-title">📄 '+info.t+'</div><div class="dl-sub">'+info.s+'</div></div><a href="'+url+'" class="dl-btn" target="_blank">⬇ Download</a></div>'
+        :'<div class="download-item"><div class="dl-info"><div class="dl-title">📄 '+info.t+'</div><div class="dl-sub">'+info.s+'</div></div><span style="color:var(--muted);font-size:13px">Wird in Kürze verfügbar</span></div>';
+    }
+    document.getElementById('downloadsPanel').style.display='block';
+    document.getElementById('inputSection').style.display='none';
+  }
+  function showMsg(text,type){const m=document.getElementById('message');m.textContent=text;m.className=type;m.style.display='block';}
+  document.getElementById('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter')redeemCode();});
+  document.getElementById('codeInput').addEventListener('input',function(){const s=this.selectionStart,e=this.selectionEnd;this.value=this.value.toUpperCase();this.setSelectionRange(s,e);});
 </script>
 </body>
 </html>
