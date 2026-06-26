@@ -1,362 +1,183 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Datenschutzrichtlinie — DS24 Affiliate Automation</title>
-  <link rel="icon" type="image/png" href="https://digipartner73.github.io/ds24-links/icon.png">
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500&display=swap');
-
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg: #0f0f13;
-      --surface: #1a1a24;
-      --border: #2a2a38;
-      --gold: #c9a84c;
-      --gold-light: #e8c96a;
-      --text: #e8e8f0;
-      --muted: #8888a0;
-      --accent: #4a90d9;
-    }
-
-    body {
-      font-family: 'DM Sans', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.75;
-      font-weight: 300;
-    }
-
-    header {
-      border-bottom: 1px solid var(--border);
-      padding: 1.5rem 2rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      position: sticky;
-      top: 0;
-      background: rgba(15,15,19,0.95);
-      backdrop-filter: blur(12px);
-      z-index: 10;
-    }
-
-    .logo-icon {
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
-      object-fit: cover;
-    }
-
-    .logo {
-      font-family: 'DM Serif Display', serif;
-      font-size: 1.2rem;
-      color: var(--gold);
-      letter-spacing: 0.02em;
-    }
-
-    .badge {
-      font-size: 0.7rem;
-      font-weight: 500;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      border: 1px solid var(--border);
-      padding: 0.2rem 0.6rem;
-      border-radius: 99px;
-    }
-
-    .container {
-      max-width: 780px;
-      margin: 0 auto;
-      padding: 4rem 2rem 6rem;
-    }
-
-    .page-header {
-      margin-bottom: 3rem;
-      padding-bottom: 2rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    .page-header h1 {
-      font-family: 'DM Serif Display', serif;
-      font-size: 2.8rem;
-      color: var(--gold-light);
-      line-height: 1.2;
-      margin-bottom: 1rem;
-    }
-
-    .meta {
-      color: var(--muted);
-      font-size: 0.85rem;
-      letter-spacing: 0.05em;
-    }
-
-    section {
-      margin-bottom: 2.5rem;
-    }
-
-    h2 {
-      font-family: 'DM Serif Display', serif;
-      font-size: 1.3rem;
-      color: var(--gold);
-      margin-bottom: 1rem;
-      padding-left: 1rem;
-      border-left: 3px solid var(--gold);
-    }
-
-    p {
-      color: #b8b8cc;
-      margin-bottom: 1rem;
-      font-size: 0.95rem;
-    }
-
-    ul {
-      list-style: none;
-      padding-left: 0;
-      margin-bottom: 1rem;
-    }
-
-    ul li {
-      color: #b8b8cc;
-      font-size: 0.95rem;
-      padding: 0.3rem 0 0.3rem 1.5rem;
-      position: relative;
-    }
-
-    ul li::before {
-      content: '→';
-      position: absolute;
-      left: 0;
-      color: var(--gold);
-      font-size: 0.8rem;
-    }
-
-    a {
-      color: var(--accent);
-      text-decoration: none;
-    }
-
-    a:hover {
-      text-decoration: underline;
-    }
-
-    .highlight-box {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      padding: 1.2rem 1.5rem;
-      border-radius: 4px;
-      margin-bottom: 1.5rem;
-    }
-
-    .highlight-box p {
-      margin: 0;
-      font-size: 0.9rem;
-    }
-
-    .footer-note {
-      margin-top: 4rem;
-      padding-top: 2rem;
-      border-top: 1px solid var(--border);
-      color: var(--muted);
-      font-size: 0.8rem;
-      text-align: center;
-    }
-
-    .back-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      color: var(--muted);
-      font-size: 0.85rem;
-      margin-top: 0.5rem;
-      transition: color 0.2s;
-    }
-    .back-link:hover { color: var(--gold); text-decoration: none; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 1.5rem;
-      font-size: 0.9rem;
-    }
-
-    th {
-      background: var(--surface);
-      color: var(--gold);
-      font-weight: 500;
-      text-align: left;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--border);
-    }
-
-    td {
-      padding: 0.65rem 1rem;
-      color: #b8b8cc;
-      border-bottom: 1px solid var(--border);
-      vertical-align: top;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Datenschutzrichtlinie — DS24 Affiliate Automation</title>
+<link rel="icon" type="image/png" href="https://digipartner73.github.io/ds24-links/icon.png">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a24;
+    --border: #2a2a38;
+    --gold: #c9a84c;
+    --gold-light: #e8c96a;
+    --text: #e8e8f0;
+    --muted: #8888a0;
+    --accent: #4a90d9;
+  }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); line-height: 1.75; font-weight: 300; }
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 1.5rem 2rem;
+    display: flex; align-items: center; gap: 1rem;
+    position: sticky; top: 0;
+    background: rgba(15,15,19,0.95);
+    backdrop-filter: blur(12px);
+    z-index: 10;
+  }
+  .logo-icon { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; }
+  .logo { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: var(--gold); letter-spacing: 0.02em; }
+  .badge { font-size: 0.7rem; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--border); padding: 0.2rem 0.6rem; border-radius: 99px; }
+  .container { max-width: 780px; margin: 0 auto; padding: 4rem 2rem 6rem; }
+  .page-header { margin-bottom: 3rem; padding-bottom: 2rem; border-bottom: 1px solid var(--border); }
+  .page-header h1 { font-family: 'DM Serif Display', serif; font-size: 2.8rem; color: var(--gold-light); line-height: 1.2; margin-bottom: 1rem; }
+  .meta { color: var(--muted); font-size: 0.85rem; letter-spacing: 0.05em; }
+  section { margin-bottom: 2.5rem; }
+  h2 { font-family: 'DM Serif Display', serif; font-size: 1.3rem; color: var(--gold); margin-bottom: 1rem; padding-left: 1rem; border-left: 3px solid var(--gold); }
+  p { color: #b8b8cc; margin-bottom: 1rem; font-size: 0.95rem; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  th { background: var(--surface); color: var(--gold); font-weight: 500; padding: 0.75rem 1rem; text-align: left; border-bottom: 2px solid var(--border); }
+  td { color: #b8b8cc; padding: 0.65rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  ul { list-style: none; padding-left: 0; margin-bottom: 1rem; }
+  ul li { color: #b8b8cc; font-size: 0.95rem; padding: 0.3rem 0 0.3rem 1.5rem; position: relative; }
+  ul li::before { content: '\2192'; position: absolute; left: 0; color: var(--gold); font-size: 0.8rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .back-link { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--muted); font-size: 0.85rem; margin-top: 0.5rem; transition: color 0.2s; }
+  .back-link:hover { color: var(--gold); text-decoration: none; }
+  .footer-note { margin-top: 4rem; padding-top: 2rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; text-align: center; }
+</style>
 </head>
 <body>
-
 <header>
   <img src="https://digipartner73.github.io/ds24-links/icon.png" alt="DS24 Affiliate Automation Logo" class="logo-icon">
   <span class="logo">DS24 Affiliate Automation</span>
   <span class="badge">Legal</span>
 </header>
-
 <div class="container">
-
   <div class="page-header">
     <h1>Datenschutzrichtlinie</h1>
-    <p class="meta">Stand: 17. Mai 2026 &nbsp;·&nbsp; Gültig ab: 17. Mai 2026</p>
-    <a href="https://digipartner73.github.io/ds24-links/" class="back-link">← Zurück zur Startseite</a>
+    <p class="meta">Stand: 26. Juni 2026 &nbsp;&middot;&nbsp; G&uuml;ltig ab: 26. Juni 2026</p>
+    <a href="https://digipartner73.github.io/ds24-links/" class="back-link">&larr; Zur&uuml;ck zur Startseite</a>
   </div>
-
-  <div class="highlight-box">
-    <p>Diese Datenschutzrichtlinie erläutert, wie DS24 Affiliate Automation personenbezogene Daten erhebt, verarbeitet und schützt, insbesondere im Zusammenhang mit der Nutzung der TikTok Content Posting API.</p>
-  </div>
-
   <section>
     <h2>1. Verantwortlicher</h2>
     <p>Verantwortlicher im Sinne der DSGVO:</p>
     <ul>
       <li>Ralf Meyer</li>
-      <li>E-Mail: info@meyer-ralf.de</li>
-      <li>Website: https://digipartner73.github.io/ds24-links/</li>
+      <li>E-Mail: <a href="mailto:info@meyer-ralf.de">info@meyer-ralf.de</a></li>
+      <li>Website: <a href="https://digipartner73.github.io/ds24-links/">https://digipartner73.github.io/ds24-links/</a></li>
     </ul>
   </section>
-
   <section>
-    <h2>2. Welche Daten wir erheben</h2>
-    <p>Durch die Autorisierung der App über TikTok Login erhalten wir Zugriff auf folgende Daten:</p>
-    <table>
-      <thead>
-        <tr>
-          <th>Datenkategorie</th>
-          <th>Zweck</th>
-          <th>Rechtsgrundlage</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>TikTok User-ID (Open ID)</td>
-          <td>Identifikation des autorisierten Kontos</td>
-          <td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td>
-        </tr>
-        <tr>
-          <td>TikTok Anzeigename</td>
-          <td>Anzeige in der App-Oberfläche</td>
-          <td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td>
-        </tr>
-        <tr>
-          <td>TikTok Avatar</td>
-          <td>Anzeige in der App-Oberfläche</td>
-          <td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td>
-        </tr>
-        <tr>
-          <td>Veröffentlichte Video-IDs</td>
-          <td>Tracking der Veröffentlichungen</td>
-          <td>Berechtigtes Interesse (Art. 6 Abs. 1f DSGVO)</td>
-        </tr>
-        <tr>
-          <td>Zugriffstoken</td>
-          <td>Authentifizierung gegenüber der TikTok API</td>
-          <td>Vertragserfüllung (Art. 6 Abs. 1b DSGVO)</td>
-        </tr>
-      </tbody>
-    </table>
+    <h2>2. Zweck der Anwendung</h2>
+    <p>DS24 Affiliate Automation ist ein automatisiertes Tool zur Erstellung und Ver&ouml;ffentlichung von Affiliate-Marketing-Videoinhalten auf sozialen Plattformen, darunter TikTok, Pinterest, Instagram und YouTube. Die App nutzt die offiziellen APIs dieser Plattformen, um Inhalte im Namen autorisierter Nutzer zu verwalten und zu ver&ouml;ffentlichen.</p>
   </section>
-
   <section>
-    <h2>3. TikTok API — Datenzugriff und Berechtigungen</h2>
+    <h2>3. Welche Daten wir erheben</h2>
+    <p>Je nach genutzter Plattform erheben wir folgende Daten:</p>
+    <table>
+      <tr><th>Plattform</th><th>Datenkategorie</th><th>Zweck</th><th>Rechtsgrundlage</th></tr>
+      <tr><td>TikTok</td><td>User-ID, Anzeigename, Avatar, Video-IDs, Zugriffstoken</td><td>Identifikation, Ver&ouml;ffentlichung von Inhalten</td><td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td></tr>
+      <tr><td>Pinterest</td><td>User-ID, Anzeigename, Zugriffstoken, Pin-IDs, Board-Informationen</td><td>Identifikation, Erstellen und Verwalten von Pins</td><td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td></tr>
+      <tr><td>Instagram</td><td>User-ID, Zugriffstoken, Medien-IDs</td><td>Ver&ouml;ffentlichung von Reels und Beitr&auml;gen</td><td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td></tr>
+      <tr><td>YouTube</td><td>User-ID, Zugriffstoken, Video-IDs</td><td>Ver&ouml;ffentlichung von Shorts</td><td>Einwilligung (Art. 6 Abs. 1a DSGVO)</td></tr>
+    </table>
+    <p>Wir rufen ausschlie&szlig;lich die Daten ab, die zur Erf&uuml;llung der jeweiligen App-Funktion notwendig sind. Wir verkaufen oder teilen Ihre Daten nicht mit Dritten.</p>
+  </section>
+  <section>
+    <h2>4. Pinterest API &mdash; Datenzugriff und Berechtigungen</h2>
+    <p>Die App nutzt folgende Pinterest API-Berechtigungen:</p>
+    <ul>
+      <li><strong>boards:read</strong> &mdash; Lesen von Board-Informationen des autorisierten Kontos</li>
+      <li><strong>boards:write</strong> &mdash; Erstellen und Verwalten von Boards</li>
+      <li><strong>pins:read</strong> &mdash; Lesen von Pin-Informationen</li>
+      <li><strong>pins:write</strong> &mdash; Erstellen und Ver&ouml;ffentlichen von Pins im Namen des Nutzers</li>
+      <li><strong>user_accounts:read</strong> &mdash; Lesen grundlegender Kontoinformationen</li>
+    </ul>
+    <p>Pinterest-Zugriffstoken werden verschl&uuml;sselt gespeichert und ausschlie&szlig;lich zur Authentifizierung gegen&uuml;ber der Pinterest API verwendet. Sie werden nicht an Dritte weitergegeben.</p>
+  </section>
+  <section>
+    <h2>5. TikTok API &mdash; Datenzugriff und Berechtigungen</h2>
     <p>Die App nutzt folgende TikTok API-Berechtigungen:</p>
     <ul>
-      <li><strong>user.info.basic</strong> — Lesen grundlegender Profilinformationen (User-ID, Anzeigename, Avatar)</li>
-      <li><strong>video.publish</strong> — Veröffentlichung von Videoinhalten in Ihrem Namen</li>
-      <li><strong>video.upload</strong> — Hochladen von Videoinhalten auf TikTok</li>
+      <li><strong>user.info.basic</strong> &mdash; Lesen grundlegender Profilinformationen (User-ID, Anzeigename, Avatar)</li>
+      <li><strong>video.publish</strong> &mdash; Ver&ouml;ffentlichung von Videoinhalten in Ihrem Namen</li>
+      <li><strong>video.upload</strong> &mdash; Hochladen von Videoinhalten auf TikTok</li>
     </ul>
-    <p>Wir rufen ausschließlich die Daten ab, die zur Erfüllung der App-Funktionen notwendig sind. Wir verkaufen oder teilen Ihre TikTok-Daten nicht mit Dritten.</p>
   </section>
-
   <section>
-    <h2>4. Speicherung und Verarbeitung</h2>
-    <p>Die erhobenen Daten werden wie folgt gespeichert:</p>
+    <h2>6. Speicherung und Verarbeitung</h2>
+    <p>Die erhobenen Daten werden wie folgt gespeichert und verarbeitet:</p>
     <ul>
-      <li>Airtable (USA) — Speicherung von Produktdaten und Veröffentlichungsprotokollen. Airtable ist nach dem EU-US Data Privacy Framework zertifiziert.</li>
-      <li>Dropbox (USA) — Speicherung von Audio- und Videodateien. Dropbox ist nach dem EU-US Data Privacy Framework zertifiziert.</li>
-      <li>Make.com (EU) — Automatisierungsplattform zur Verarbeitung der API-Aufrufe.</li>
+      <li><strong>Airtable (USA)</strong> &mdash; Speicherung von Produktdaten, Ver&ouml;ffentlichungsprotokollen und API-Token. Airtable ist nach dem EU-US Data Privacy Framework zertifiziert.</li>
+      <li><strong>Dropbox (USA)</strong> &mdash; Speicherung von Audio- und Videodateien. Dropbox ist nach dem EU-US Data Privacy Framework zertifiziert.</li>
+      <li><strong>Make.com (EU)</strong> &mdash; Automatisierungsplattform zur Verarbeitung der API-Aufrufe.</li>
     </ul>
-    <p>TikTok-Zugriffstoken werden verschlüsselt gespeichert und nicht an Dritte weitergegeben. Sie werden ausschließlich zur Authentifizierung gegenüber der TikTok API verwendet.</p>
+    <p>Alle Zugriffstoken werden verschl&uuml;sselt gespeichert und nicht an Dritte weitergegeben. Sie werden ausschlie&szlig;lich zur Authentifizierung gegen&uuml;ber den jeweiligen Plattform-APIs verwendet.</p>
   </section>
-
   <section>
-    <h2>5. Datenweitergabe an Dritte</h2>
-    <p>Wir geben Ihre Daten nicht an Dritte weiter, außer:</p>
+    <h2>7. Datenweitergabe an Dritte</h2>
+    <p>Wir geben Ihre Daten nicht an Dritte weiter, au&szlig;er:</p>
     <ul>
-      <li>An TikTok, soweit dies zur API-Nutzung erforderlich ist</li>
+      <li>An die jeweiligen Plattformen (Pinterest, TikTok, Instagram, YouTube), soweit dies zur API-Nutzung erforderlich ist</li>
       <li>An die oben genannten Auftragsverarbeiter (Airtable, Dropbox, Make.com)</li>
       <li>Wenn wir gesetzlich dazu verpflichtet sind</li>
     </ul>
   </section>
-
   <section>
-    <h2>6. Ihre Rechte</h2>
-    <p>Sie haben folgende Rechte bezüglich Ihrer personenbezogenen Daten:</p>
+    <h2>8. Ihre Rechte</h2>
+    <p>Sie haben folgende Rechte bez&uuml;glich Ihrer personenbezogenen Daten:</p>
     <ul>
-      <li>Recht auf Auskunft über gespeicherte Daten (Art. 15 DSGVO)</li>
+      <li>Recht auf Auskunft &uuml;ber gespeicherte Daten (Art. 15 DSGVO)</li>
       <li>Recht auf Berichtigung unrichtiger Daten (Art. 16 DSGVO)</li>
-      <li>Recht auf Löschung Ihrer Daten (Art. 17 DSGVO)</li>
-      <li>Recht auf Einschränkung der Verarbeitung (Art. 18 DSGVO)</li>
-      <li>Recht auf Datenübertragbarkeit (Art. 20 DSGVO)</li>
+      <li>Recht auf L&ouml;schung Ihrer Daten (Art. 17 DSGVO)</li>
+      <li>Recht auf Einschr&auml;nkung der Verarbeitung (Art. 18 DSGVO)</li>
+      <li>Recht auf Daten&uuml;bertragbarkeit (Art. 20 DSGVO)</li>
       <li>Recht auf Widerspruch gegen die Verarbeitung (Art. 21 DSGVO)</li>
       <li>Recht auf Widerruf der Einwilligung jederzeit</li>
     </ul>
-    <p>Zur Ausübung Ihrer Rechte wenden Sie sich an: <a href="mailto:info@meyer-ralf.de">info@meyer-ralf.de</a></p>
+    <p>Zur Aus&uuml;bung Ihrer Rechte wenden Sie sich an: <a href="mailto:info@meyer-ralf.de">info@meyer-ralf.de</a></p>
   </section>
-
   <section>
-    <h2>7. Widerruf der TikTok-Autorisierung</h2>
-    <p>Sie können die Autorisierung der App jederzeit widerrufen:</p>
+    <h2>9. Widerruf der Autorisierung</h2>
+    <p>Sie k&ouml;nnen die Autorisierung der App jederzeit bei der jeweiligen Plattform widerrufen:</p>
     <ul>
-      <li>TikTok App öffnen → Profil → Einstellungen → Sicherheit → Autorisierte Apps → DS24 Affiliate Automation → Zugriff entziehen</li>
+      <li><strong>Pinterest:</strong> Pinterest App &rarr; Einstellungen &rarr; Sicherheit und Datenschutz &rarr; Apps und Websites &rarr; DS24 Affiliate Automation &rarr; Zugriff entfernen</li>
+      <li><strong>TikTok:</strong> TikTok App &rarr; Profil &rarr; Einstellungen &rarr; Sicherheit &rarr; Autorisierte Apps &rarr; DS24 Affiliate Automation &rarr; Zugriff entziehen</li>
+      <li><strong>Instagram/Meta:</strong> Facebook &rarr; Einstellungen &rarr; Apps und Websites &rarr; DS24 Affiliate Automation &rarr; Entfernen</li>
+      <li><strong>YouTube/Google:</strong> myaccount.google.com &rarr; Sicherheit &rarr; Drittanbieter-Apps mit Kontozugriff &rarr; DS24 Affiliate Automation &rarr; Zugriff entfernen</li>
     </ul>
-    <p>Nach dem Widerruf werden keine weiteren Daten über die TikTok API abgerufen. Bereits gespeicherte Daten werden auf Anfrage gelöscht.</p>
+    <p>Nach dem Widerruf werden keine weiteren Daten &uuml;ber die jeweilige API abgerufen. Bereits gespeicherte Daten werden auf Anfrage gel&ouml;scht.</p>
   </section>
-
   <section>
-    <h2>8. Datensicherheit</h2>
-    <p>Wir treffen technische und organisatorische Maßnahmen zum Schutz Ihrer Daten, darunter:</p>
+    <h2>10. Datensicherheit</h2>
     <ul>
-      <li>Verschlüsselte Übertragung aller Daten via HTTPS/TLS</li>
-      <li>Verschlüsselte Speicherung von Zugriffstoken</li>
-      <li>Zugangsbeschränkung auf autorisierte Personen</li>
-      <li>Regelmäßige Überprüfung der Sicherheitsmaßnahmen</li>
+      <li>Verschl&uuml;sselte &Uuml;bertragung aller Daten via HTTPS/TLS</li>
+      <li>Verschl&uuml;sselte Speicherung von Zugriffstoken</li>
+      <li>Zugangsbeschr&auml;nkung auf autorisierte Personen</li>
+      <li>Regelm&auml;&szlig;ige &Uuml;berpr&uuml;fung der Sicherheitsma&szlig;nahmen</li>
     </ul>
   </section>
-
   <section>
-    <h2>9. Cookies und Tracking</h2>
-    <p>Diese Website und App verwenden keine Tracking-Cookies und kein analytisches Tracking von Drittanbietern. Es werden ausschließlich technisch notwendige Daten verarbeitet.</p>
+    <h2>11. Cookies und Tracking</h2>
+    <p>Diese Website und App verwenden keine Tracking-Cookies und kein analytisches Tracking von Drittanbietern. Es werden ausschlie&szlig;lich technisch notwendige Daten verarbeitet.</p>
   </section>
-
   <section>
-    <h2>10. Beschwerderecht</h2>
-    <p>Sie haben das Recht, sich bei einer Datenschutzbehörde zu beschweren. Zuständige Behörde für Deutschland ist der Bundesbeauftragte für den Datenschutz und die Informationsfreiheit (BfDI): <a href="https://www.bfdi.bund.de" target="_blank">www.bfdi.bund.de</a></p>
+    <h2>12. Beschwerderecht</h2>
+    <p>Zust&auml;ndige Beh&ouml;rde f&uuml;r Deutschland: Bundesbeauftragter f&uuml;r den Datenschutz und die Informationsfreiheit (BfDI): <a href="https://www.bfdi.bund.de" target="_blank">www.bfdi.bund.de</a></p>
   </section>
-
   <section>
-    <h2>11. Änderungen dieser Datenschutzrichtlinie</h2>
-    <p>Wir behalten uns vor, diese Datenschutzrichtlinie jederzeit anzupassen. Die jeweils aktuelle Version ist auf dieser Seite abrufbar. Das Datum der letzten Aktualisierung ist oben angegeben.</p>
+    <h2>13. &Auml;nderungen dieser Datenschutzrichtlinie</h2>
+    <p>Wir behalten uns vor, diese Datenschutzrichtlinie jederzeit anzupassen. Die jeweils aktuelle Version ist auf dieser Seite abrufbar.</p>
   </section>
-
   <div class="footer-note">
-    © 2026 DS24 Affiliate Automation · Ralf Meyer · <a href="terms.html">Nutzungsbedingungen</a>
+    &copy; 2026 DS24 Affiliate Automation &middot; Ralf Meyer &middot; <a href="https://digipartner73.github.io/ds24-links/terms.html">Nutzungsbedingungen</a>
   </div>
-
 </div>
 </body>
 </html>
