@@ -186,7 +186,7 @@ jobs:
               existing = set()
               offset = None
               while True:
-                  params = {"fields[]": ["Affiliate_Link"], "pageSize": 100}
+                  params = {"fields[]": ["Affiliate_Link_Raw"], "pageSize": 100}
                   if offset:
                       params["offset"] = offset
                   r = requests.get(url, headers=headers, params=params, timeout=15)
@@ -194,7 +194,7 @@ jobs:
                       break
                   data = r.json()
                   for rec in data.get("records", []):
-                      link = rec.get("fields", {}).get("Affiliate_Link", "")
+                      link = rec.get("fields", {}).get("Affiliate_Link_Raw", "")
                       asin = extract_asin(link)
                       if asin:
                           existing.add(asin)
@@ -219,13 +219,11 @@ jobs:
                   records = []
                   for p in batch:
                       fields = {
-                          "Name": p["title"],
-                          "Nische": p["nische"],
-                          "Affiliate_Link": p["affiliate_link"],
+                          "Produktname": p["title"],
+                          "Kategorie": p["nische"],
                           "Affiliate_Link_Raw": p["affiliate_link"],
-                          "Quelle": "Amazon DE",
+                          "Plattform": "Amazon DE",
                           "Status": "neu_geladen",
-                          "Sprache": "DE",
                       }
                       if p["price"] is not None:
                           fields["Preis"] = p["price"]
