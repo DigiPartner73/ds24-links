@@ -1,0 +1,298 @@
+name: DS24 — Amazon Scout
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # täglich 07:00 UTC
+  workflow_dispatch:        # manueller Trigger
+
+jobs:
+  scout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4 lxml
+
+      - name: Run Amazon Scout
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: |
+          python3 << 'PYEOF'
+          import requests
+          import time
+          import json
+          import re
+          import os
+          from bs4 import BeautifulSoup
+
+          AIRTABLE_TOKEN   = os.environ["AIRTABLE_TOKEN"]
+          BASE_ID          = "apppfrE10FwXz9IMY"
+          TABLE_PRODUKTE   = "tblm1szgXQZc0mRle"
+          TABLE_CONFIG     = "tblHq1P7Z7bE7hUEj"
+          MAX_PER_CATEGORY = 10
+
+          HEADERS = {
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/124.0.0.0 Safari/537.36"
+              ),
+              "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+              "Accept-Encoding": "gzip, deflate, br",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Connection": "keep-alive",
+          }
+
+          SESSION = requests.Session()
+          SESSION.headers.update(HEADERS)
+
+          # Kategorie → Nische-Label + Nischen-Sprach-Bezeichnung
+          CATEGORY_MAP = {
+              "beauty":       {"nische": "Beauty & Pflege",       "url_slug": "beauty"},
+              "apparel":      {"nische": "Mode & Kleidung",       "url_slug": "apparel"},
+              "kitchen":      {"nische": "Küche & Haushalt",      "url_slug": "kitchen"},
+              "garden":       {"nische": "Garten",                "url_slug": "garden"},
+              "sports":       {"nische": "Sport & Fitness",       "url_slug": "sports"},
+              "jewelry":      {"nische": "Schmuck & Accessoires", "url_slug": "jewelry"},
+              "toys":         {"nische": "Spielzeug & Familie",   "url_slug": "toys"},
+              "pet-supplies": {"nische": "Haustiere & Tierbedarf","url_slug": "pet-supplies"},
+          }
+
+          # ── Airtable Config lesen ────────────────────────────────────────────
+
+          def get_config():
+              url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_CONFIG}"
+              headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+              r = requests.get(url, headers=headers, timeout=15)
+              r.raise_for_status()
+              config = {}
+              for rec in r.json().get("records", []):
+                  param = rec["fields"].get("Parameter", "")
+                  wert  = rec["fields"].get("Wert", "")
+                  if param:
+                      config[param] = {"wert": wert, "id": rec["id"]}
+              return config
+
+          def update_config(record_id, new_value):
+              url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_CONFIG}/{record_id}"
+              headers = {
+                  "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                  "Content-Type": "application/json",
+              }
+              r = requests.patch(url, headers=headers,
+                                 json={"fields": {"Wert": str(new_value)}}, timeout=15)
+              return r.status_code in (200, 201)
+
+          # ── Scraping ─────────────────────────────────────────────────────────
+
+          def fetch_page(url, retries=3):
+              for attempt in range(retries):
+                  try:
+                      r = SESSION.get(url, timeout=20)
+                      if r.status_code == 200:
+                          return r.text
+                      print(f"  HTTP {r.status_code} (Versuch {attempt+1})")
+                  except Exception as e:
+                      print(f"  Fehler: {e} (Versuch {attempt+1})")
+                  time.sleep(5 + attempt * 5)
+              return None
+
+          def extract_asin(href):
+              m = re.search(r'/dp/([A-Z0-9]{10})', href)
+              if m:
+                  return m.group(1)
+              m = re.search(r'(?:asin=|/product/)([A-Z0-9]{10})', href)
+              return m.group(1) if m else None
+
+          def parse_bestsellers(html, amazon_tag, nische):
+              soup = BeautifulSoup(html, "lxml")
+              products = []
+
+              # Mehrere Selektoren für Amazons wechselndes HTML
+              items = (
+                  soup.select('div[id^="gridItemRoot"]') or
+                  soup.select('li.zg-item-immersion') or
+                  soup.select('div.zg-grid-general-faceout') or
+                  soup.select('div[data-asin]')
+              )
+              print(f"  {len(items)} Einträge gefunden")
+
+              for item in items[:MAX_PER_CATEGORY]:
+                  try:
+                      # Zuerst data-asin versuchen
+                      asin = item.get('data-asin')
+                      if not asin:
+                          link_el = item.select_one('a[href*="/dp/"]')
+                          if not link_el:
+                              continue
+                          asin = extract_asin(link_el.get('href', ''))
+                      if not asin or len(asin) != 10:
+                          continue
+
+                      # Titel
+                      title_el = (
+                          item.select_one('._cDEzb_p13n-sc-css-line-clamp-1_1Fn1y') or
+                          item.select_one('.p13n-sc-truncate-desktop-type2') or
+                          item.select_one('.p13n-sc-truncated') or
+                          item.select_one('span[class*="truncate"]') or
+                          item.select_one('a.a-link-normal span') or
+                          item.select_one('span.a-size-base.a-color-base')
+                      )
+                      title = title_el.get_text(strip=True) if title_el else ""
+                      if len(title) < 3:
+                          title = f"Amazon Bestseller {asin}"
+
+                      # Preis
+                      price_el = (
+                          item.select_one('span.p13n-sc-price') or
+                          item.select_one('span._cDEzb_p13n-sc-price_3mJ9Z') or
+                          item.select_one('span.a-price span.a-offscreen')
+                      )
+                      price_text = price_el.get_text(strip=True) if price_el else ""
+                      price_clean = re.sub(r'[^\d,.]', '', price_text).replace(',', '.')
+                      try:
+                          price = float(price_clean) if price_clean else None
+                      except ValueError:
+                          price = None
+
+                      affiliate_link = f"https://www.amazon.de/dp/{asin}?tag={amazon_tag}"
+
+                      products.append({
+                          "asin":  asin,
+                          "title": title[:200],
+                          "price": price,
+                          "nische": nische,
+                          "affiliate_link": affiliate_link,
+                      })
+                      print(f"  ✓ {asin}: {title[:60]}")
+
+                  except Exception as e:
+                      print(f"  Parse-Fehler: {e}")
+                      continue
+
+              return products
+
+          # ── Airtable: bestehende ASINs ───────────────────────────────────────
+
+          def get_existing_asins():
+              url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_PRODUKTE}"
+              headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+              existing = set()
+              offset = None
+              while True:
+                  params = {"fields[]": ["Affiliate_Link"], "pageSize": 100}
+                  if offset:
+                      params["offset"] = offset
+                  r = requests.get(url, headers=headers, params=params, timeout=15)
+                  if r.status_code != 200:
+                      break
+                  data = r.json()
+                  for rec in data.get("records", []):
+                      link = rec.get("fields", {}).get("Affiliate_Link", "")
+                      asin = extract_asin(link)
+                      if asin:
+                          existing.add(asin)
+                  offset = data.get("offset")
+                  if not offset:
+                      break
+                  time.sleep(0.3)
+              print(f"  {len(existing)} vorhandene ASINs in Airtable")
+              return existing
+
+          def write_to_airtable(products, existing_asins):
+              url = f"https://api.airtable.com/v0/{BASE_ID}/{TABLE_PRODUKTE}"
+              headers = {
+                  "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+                  "Content-Type": "application/json",
+              }
+              new_products = [p for p in products if p["asin"] not in existing_asins]
+              print(f"\n{len(new_products)} neue Produkte (von {len(products)} gesamt)")
+              written = 0
+              for i in range(0, len(new_products), 10):
+                  batch = new_products[i:i+10]
+                  records = []
+                  for p in batch:
+                      fields = {
+                          "Name": p["title"],
+                          "Nische": p["nische"],
+                          "Affiliate_Link": p["affiliate_link"],
+                          "Affiliate_Link_Raw": p["affiliate_link"],
+                          "Quelle": "Amazon DE",
+                          "Status": "neu_geladen",
+                          "Sprache": "DE",
+                      }
+                      if p["price"] is not None:
+                          fields["Preis"] = p["price"]
+                      records.append({"fields": fields})
+                  r = requests.post(url, headers=headers,
+                                    json={"records": records}, timeout=15)
+                  if r.status_code in (200, 201):
+                      written += len(batch)
+                      print(f"  ✓ Batch {i//10+1}: {len(batch)} Records")
+                  else:
+                      print(f"  ✗ Batch Fehler: {r.status_code} {r.text[:200]}")
+                  time.sleep(0.5)
+              return written
+
+          # ── Hauptlauf ────────────────────────────────────────────────────────
+
+          print("=== Amazon Scout gestartet ===\n")
+
+          config = get_config()
+
+          amazon_tag    = config.get("amazon_tracking_id", {}).get("wert", "digipartner73-21")
+          kategorien_str = config.get("amazon_kategorien", {}).get("wert", "beauty,sports,kitchen")
+          kategorien    = [k.strip() for k in kategorien_str.split(",") if k.strip()]
+          try:
+              idx = int(config.get("amazon_kategorie_index", {}).get("wert", "0"))
+          except ValueError:
+              idx = 0
+
+          # Aktuelle Kategorie (rotiert täglich)
+          cat_key = kategorien[idx % len(kategorien)]
+          cat_info = CATEGORY_MAP.get(cat_key, {"nische": cat_key, "url_slug": cat_key})
+          next_idx = (idx + 1) % len(kategorien)
+
+          print(f"Amazon-Tag:   {amazon_tag}")
+          print(f"Kategorien:   {kategorien}")
+          print(f"Heute:        #{idx} → {cat_key} ({cat_info['nische']})")
+          print(f"Nächste:      #{next_idx} → {kategorien[next_idx]}\n")
+
+          url = f"https://www.amazon.de/gp/bestsellers/{cat_info['url_slug']}/"
+          print(f"Scrape URL: {url}")
+
+          html = fetch_page(url)
+
+          if not html:
+              print("✗ Konnte Seite nicht laden — Abbruch")
+              exit(1)
+
+          if "captcha" in html.lower() or "robot" in html.lower():
+              print("✗ Amazon-CAPTCHA erkannt — Abbruch (nächster Versuch morgen)")
+              # Index NICHT erhöhen, damit morgen dieselbe Kategorie nochmal versucht wird
+              exit(0)
+
+          products = parse_bestsellers(html, amazon_tag, cat_info["nische"])
+          print(f"\n{len(products)} Produkte extrahiert")
+
+          if products:
+              existing_asins = get_existing_asins()
+              written = write_to_airtable(products, existing_asins)
+              print(f"\n✅ {written} neue Produkte in Airtable eingetragen")
+          else:
+              print("⚠️ Keine Produkte extrahiert — HTML-Struktur evtl. geändert")
+
+          # Index für morgen erhöhen
+          idx_record_id = config.get("amazon_kategorie_index", {}).get("id")
+          if idx_record_id:
+              ok = update_config(idx_record_id, next_idx)
+              print(f"Index aktualisiert: {idx} → {next_idx} ({'✓' if ok else '✗'})")
+
+          print("\n=== Amazon Scout beendet ===")
+          PYEOF
