@@ -1,0 +1,263 @@
+name: DS24 — Produce Video (TTS + Gemini Image + FFmpeg)
+
+# Neue Pipeline: OpenAI TTS shimmer → Gemini Imagen 9:16 → FFmpeg Ken Burns → GitHub Release
+# Ersetzt: nano-banana.yml + SA-06 (ElevenLabs) + SA-07 (JSON2Video)
+# Neue Status-Kette: skript_fertig → video_processing → video_fertig
+# Benötigt GitHub Secrets: AIRTABLE_TOKEN, OPENAI_API_KEY, GEMINI_API_KEY
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      record_id:
+        description: 'Airtable Record ID (optional)'
+        required: false
+  repository_dispatch:
+    types: [produce-video]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: produce-video
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Install deps
+        run: |
+          sudo apt-get install -y ffmpeg fonts-liberation
+          pip install requests pillow --quiet
+
+      - name: Produce video
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FORCED_RECORD_ID: ${{ github.event.client_payload.record_id || github.event.inputs.record_id || '' }}
+        run: |
+          python3 << 'PYEOF'
+          import requests, os, sys, base64, subprocess, json, time, textwrap
+          from PIL import Image, ImageDraw, ImageFont
+
+          # ─── Konfiguration ──────────────────────────────────────────
+          AT_TOKEN  = os.environ['AIRTABLE_TOKEN']
+          GH_TOKEN  = os.environ['GH_TOKEN']
+          FORCED_ID = os.environ.get('FORCED_RECORD_ID', '').strip()
+          BASE_ID   = 'apppfrE10FwXz9IMY'
+          TABLE_ID  = 'tblm1szgXQZc0mRle'
+          CFG_TABLE = 'tblHq1P7Z7bE7hUEj'
+          REPO      = 'DigiPartner73/ds24-links'
+          AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
+          GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
+
+          # ─── Helpers ────────────────────────────────────────────────
+          def at_patch(rec_id, fields):
+              return requests.patch(
+                  f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{rec_id}',
+                  headers=AT_H, json={'fields': fields}, timeout=15).json()
+
+          def get_config(key):
+              r = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{CFG_TABLE}',
+                               headers=AT_H,
+                               params={'filterByFormula': f'{{Parameter}}="{key}"', 'maxRecords': 1},
+                               timeout=10).json()
+              recs = r.get('records', [])
+              return recs[0]['fields'].get('Wert', '') if recs else ''
+
+          def fail(rec_id, status, msg):
+              print(f'FEHLER: {msg}')
+              at_patch(rec_id, {'Status': status, 'Letzter_Fehler': msg[:500]})
+              sys.exit(1)
+
+          # ─── API Keys ───────────────────────────────────────────────
+          OPENAI_KEY = os.environ.get('OPENAI_API_KEY', '') or get_config('openai_api_key')
+          GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '') or get_config('gemini_api_key')
+          TTS_VOICE  = get_config('openai_tts_voice') or 'shimmer'
+          TTS_MODEL  = get_config('openai_tts_model') or 'tts-1'
+
+          if not OPENAI_KEY:
+              print('FEHLER: openai_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
+              sys.exit(1)
+          if not GEMINI_KEY:
+              print('FEHLER: gemini_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
+              sys.exit(1)
+          print(f'Keys OK | {TTS_MODEL}/{TTS_VOICE} | OpenAI={OPENAI_KEY[:8]}... | Gemini={GEMINI_KEY[:8]}...')
+
+          # ─── Record finden ──────────────────────────────────────────
+          if FORCED_ID:
+              print(f'Forced Record: {FORCED_ID}')
+              r = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{FORCED_ID}',
+                               headers=AT_H, timeout=10).json()
+              records = [r] if r.get('id') else []
+          else:
+              resp = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}',
+                                  headers=AT_H,
+                                  params={'filterByFormula': '{Status}="skript_fertig"',
+                                          'sort[0][field]': 'Profit_Score',
+                                          'sort[0][direction]': 'desc',
+                                          'maxRecords': 1},
+                                  timeout=15).json()
+              records = resp.get('records', [])
+
+          if not records:
+              print('Nichts zu tun — kein skript_fertig Record.'); sys.exit(0)
+
+          record   = records[0]
+          rec_id   = record['id']
+          fields   = record['fields']
+          name     = fields.get('Name', 'Produkt')
+          hook     = fields.get('Script_Hook', '')
+          volltext = fields.get('Script_Volltext', '')
+          sprache  = fields.get('Sprache', 'DE')
+
+          print(f'Verarbeite: {rec_id} | {name[:60]} | {sprache}')
+          if not volltext:
+              fail(rec_id, 'fehler_voice', 'Script_Volltext ist leer')
+
+          # Lock
+          at_patch(rec_id, {'Status': 'video_processing'})
+
+          # ─── SCHRITT 1: OpenAI TTS shimmer ──────────────────────────
+          print('[1/4] OpenAI TTS...')
+          t0 = time.time()
+          tts = requests.post('https://api.openai.com/v1/audio/speech',
+              headers={'Authorization': f'Bearer {OPENAI_KEY}', 'Content-Type': 'application/json'},
+              json={'model': TTS_MODEL, 'input': volltext[:4096],
+                    'voice': TTS_VOICE, 'response_format': 'mp3'},
+              timeout=90)
+          if tts.status_code != 200:
+              fail(rec_id, 'fehler_voice', f'TTS HTTP {tts.status_code}: {tts.text[:300]}')
+          with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
+          print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
+
+          # ─── SCHRITT 2: Gemini Imagen 3 — 9:16 Bild ────────────────
+          print('[2/4] Gemini Imagen 9:16...')
+          t0 = time.time()
+          img_prompt = (
+              f"Cinematic 9:16 vertical portrait photo for digital product '{name}'. "
+              "Aspirational lifestyle, clean modern aesthetic, warm soft lighting, "
+              "shallow depth of field. No faces, no text, no watermarks. Premium feel."
+          )
+          gem = requests.post(
+              'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
+              params={'key': GEMINI_KEY},
+              headers={'Content-Type': 'application/json'},
+              json={'instances': [{'prompt': img_prompt}],
+                    'parameters': {'sampleCount': 1, 'aspectRatio': '9:16',
+                                   'outputMimeType': 'image/jpeg'}},
+              timeout=90)
+          if gem.status_code != 200:
+              fail(rec_id, 'fehler_video', f'Gemini HTTP {gem.status_code}: {gem.text[:300]}')
+          try:
+              img_b64 = gem.json()['predictions'][0]['bytesBase64Encoded']
+          except Exception as e:
+              fail(rec_id, 'fehler_video', f'Gemini parse error: {e} | {gem.text[:200]}')
+          img_bytes = base64.b64decode(img_b64)
+          with open('background.jpg', 'wb') as f: f.write(img_bytes)
+          print(f'Gemini OK {time.time()-t0:.1f}s | {len(img_bytes)//1024}KB')
+
+          # ─── SCHRITT 3: Pillow Text-Overlay ─────────────────────────
+          print('[3/4] Text-Overlay + FFmpeg...')
+          img = Image.open('background.jpg').convert('RGB').resize((1080, 1920), Image.LANCZOS)
+          W, H = 1080, 1920
+          draw = ImageDraw.Draw(img)
+
+          FONT_BOLD = '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'
+          try:
+              f_label = ImageFont.truetype(FONT_BOLD, 38)
+              f_hook  = ImageFont.truetype(FONT_BOLD, 62)
+          except:
+              f_label = f_hook = ImageFont.load_default()
+
+          # "Werbung*" Badge oben rechts
+          draw.rectangle([W-215, 22, W-12, 70], fill=(0,0,0))
+          draw.text((W-208, 28), 'Werbung*', font=f_label, fill='#FFD700')
+
+          # Hook-Text unten — Pillow RGBA compositing (kein numpy)
+          if hook:
+              lines = textwrap.wrap(hook[:160], width=22)
+              line_h = 78
+              block_h = len(lines) * line_h + 20
+              strip_y = H - block_h - 70
+              # Halbtransparenter Hintergrund-Streifen
+              strip = Image.new('RGBA', (W, block_h + 16), (0, 0, 0, 170))
+              img_rgba = img.convert('RGBA')
+              img_rgba.paste(strip, (0, strip_y - 8), strip)
+              img = img_rgba.convert('RGB')
+              draw = ImageDraw.Draw(img)
+              for i, line in enumerate(lines):
+                  bbox = draw.textbbox((0, 0), line, font=f_hook)
+                  tw = bbox[2] - bbox[0]
+                  x = (W - tw) // 2
+                  y = strip_y + i * line_h
+                  for dx, dy in [(-3,-3),(3,-3),(-3,3),(3,3)]:
+                      draw.text((x+dx, y+dy), line, font=f_hook, fill='black')
+                  draw.text((x, y), line, font=f_hook, fill='white')
+
+          img.save('background_overlay.jpg', quality=95)
+          print(f'Overlay OK (1080x1920)')
+
+          # FFmpeg Ken Burns: JPEG + MP3 → MP4
+          r = subprocess.run([
+              'ffmpeg', '-y',
+              '-loop', '1', '-i', 'background_overlay.jpg',
+              '-i', 'voiceover.mp3',
+              '-vf', (
+                  'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,'
+                  "zoompan=z='if(eq(on,1),1.15,max(1.001,zoom-0.0008))'"
+                  ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=25"
+              ),
+              '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+              '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+              '-shortest', 'output.mp4'
+          ], capture_output=True, text=True)
+          if r.returncode != 0:
+              fail(rec_id, 'fehler_video', f'FFmpeg: {r.stderr[-400:]}')
+          print(f'FFmpeg OK | {os.path.getsize("output.mp4")/1024/1024:.1f}MB')
+
+          # ─── SCHRITT 4: GitHub Release Upload ───────────────────────
+          print('[4/4] GitHub Release...')
+          safe = ''.join(c if c.isalnum() or c=='-' else '' for c in name[:28])
+          tag = f'vid-{rec_id[:8]}-{int(time.time())}'
+          rel = requests.post(f'https://api.github.com/repos/{REPO}/releases',
+              headers=GH_H,
+              json={'tag_name': tag, 'name': f'Video: {safe}',
+                    'body': rec_id, 'draft': False, 'prerelease': False},
+              timeout=30)
+          if rel.status_code not in (200, 201):
+              fail(rec_id, 'fehler_video',
+                   f'Release HTTP {rel.status_code}: {rel.text[:200]}')
+          upload_base = rel.json()['upload_url'].split('{')[0]
+
+          def upload(path, ctype, aname):
+              with open(path, 'rb') as f: data = f.read()
+              r = requests.post(f'{upload_base}?name={aname}',
+                  headers={'Authorization': f'token {GH_TOKEN}', 'Content-Type': ctype},
+                  data=data, timeout=180)
+              if r.status_code not in (200, 201):
+                  raise Exception(f'{aname} HTTP {r.status_code}')
+              url = r.json()['browser_download_url']
+              print(f'  ✓ {aname}')
+              return url
+
+          video_url = upload('output.mp4',            'video/mp4',  'video.mp4')
+          audio_url = upload('voiceover.mp3',         'audio/mpeg', 'voiceover.mp3')
+          bg_url    = upload('background_overlay.jpg','image/jpeg', 'background.jpg')
+
+          # ─── SCHRITT 5: Airtable Update ─────────────────────────────
+          at_patch(rec_id, {
+              'Status':              'video_fertig',
+              'Video_URL':           video_url,
+              'Voiceover_File_URL':  audio_url,
+              'Video_Background_URL':bg_url,
+              'Letzter_Fehler':      ''
+          })
+          print(f'\n=== FERTIG === Record={rec_id} Status=video_fertig')
+          print(f'Video: {video_url}')
+          PYEOF
