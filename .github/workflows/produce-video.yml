@@ -1,4 +1,4 @@
-name: DS24 - Produce Video v8
+name: DS24 - Produce Video v10
 
 on:
   repository_dispatch:
@@ -27,7 +27,7 @@ jobs:
 
       - name: Install deps
         run: |
-          pip install requests google-genai --quiet
+          pip install requests --quiet
 
       - name: Produce video
         env:
