@@ -1,9 +1,9 @@
 name: DS24 — Produce Video (TTS + Gemini Image + FFmpeg)
 
-# Neue Pipeline: OpenAI TTS shimmer → Gemini Imagen 9:16 → FFmpeg Ken Burns → GitHub Release
+# Neue Pipeline: ElevenLabs TTS → Gemini Imagen 9:16 → FFmpeg Ken Burns → GitHub Release
 # Ersetzt: nano-banana.yml + SA-06 (ElevenLabs) + SA-07 (JSON2Video)
 # Neue Status-Kette: skript_fertig → video_processing → video_fertig
-# Benötigt GitHub Secrets: AIRTABLE_TOKEN, OPENAI_API_KEY, GEMINI_API_KEY
+# Benötigt GitHub Secrets: AIRTABLE_TOKEN, GEMINI_API_KEY
 
 on:
   schedule:
@@ -76,18 +76,17 @@ jobs:
               sys.exit(1)
 
           # ─── API Keys ───────────────────────────────────────────────
-          OPENAI_KEY = os.environ.get('OPENAI_API_KEY', '') or get_config('openai_api_key')
-          GEMINI_KEY = os.environ.get('GEMINI_API_KEY', '') or get_config('gemini_api_key')
-          TTS_VOICE  = get_config('openai_tts_voice') or 'shimmer'
-          TTS_MODEL  = get_config('openai_tts_model') or 'tts-1'
+          GEMINI_KEY  = os.environ.get('GEMINI_API_KEY', '') or get_config('gemini_api_key')
+          EL_KEY      = get_config('elevenlabs_api_key')
+          EL_VOICE_ID = get_config('elevenlabs_voice_id_DE') or get_config('elevenlabs_voice_id') or '4RZ84U1b4WCqpu57LvIq'
 
-          if not OPENAI_KEY:
-              print('FEHLER: openai_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
+          if not EL_KEY:
+              print('FEHLER: elevenlabs_api_key fehlt — bitte in Airtable Config eintragen')
               sys.exit(1)
           if not GEMINI_KEY:
               print('FEHLER: gemini_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
               sys.exit(1)
-          print(f'Keys OK | {TTS_MODEL}/{TTS_VOICE} | OpenAI={OPENAI_KEY[:8]}... | Gemini={GEMINI_KEY[:8]}...')
+          print(f'Keys OK | ElevenLabs voice={EL_VOICE_ID} | Gemini={GEMINI_KEY[:8]}...')
 
           # ─── Record finden ──────────────────────────────────────────
           if FORCED_ID:
@@ -123,14 +122,16 @@ jobs:
           # Lock
           at_patch(rec_id, {'Status': 'video_processing'})
 
-          # ─── SCHRITT 1: OpenAI TTS shimmer ──────────────────────────
-          print('[1/4] OpenAI TTS...')
+          # ─── SCHRITT 1: ElevenLabs TTS ──────────────────────────────
+          print('[1/4] ElevenLabs TTS...')
           t0 = time.time()
-          tts = requests.post('https://api.openai.com/v1/audio/speech',
-              headers={'Authorization': f'Bearer {OPENAI_KEY}', 'Content-Type': 'application/json'},
-              json={'model': TTS_MODEL, 'input': volltext[:4096],
-                    'voice': TTS_VOICE, 'response_format': 'mp3'},
-              timeout=90)
+          tts = requests.post(
+              f'https://api.elevenlabs.io/v1/text-to-speech/{EL_VOICE_ID}',
+              headers={'xi-api-key': EL_KEY, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg'},
+              json={'text': volltext[:5000],
+                    'model_id': 'eleven_multilingual_v2',
+                    'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75}},
+              timeout=120)
           if tts.status_code != 200:
               fail(rec_id, 'fehler_voice', f'TTS HTTP {tts.status_code}: {tts.text[:300]}')
           with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
