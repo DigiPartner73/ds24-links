@@ -270,7 +270,8 @@ try:
     # Bug #17: duration: -1 auf Scene-Ebene (Auto-Dauer)
     # Bug #18: Audio PER SCENE, nicht Movie-Ebene
     # Bug #22: duration: -2 auf Video-Element (Loop)
-    # Bug #74: style muss CSS-STRING sein, KEIN Objekt! z.B. "font-size:34px;color:#FFD700;"
+    # Bug #74: style = Template-Referenz in JSON2Video! NIEMALS für CSS verwenden.
+    # Styling-Properties direkt auf das Element (Top-Level): font-size, color, etc.
     j2v_payload = {
         "resolution": "9:16",
         "quality": "high",
@@ -288,14 +289,24 @@ try:
                     "text": "Werbung*",
                     "x": "right",
                     "y": "top",
-                    "style": "font-size:34px;font-weight:700;color:#FFD700;background-color:#000000;opacity:0.85;padding:8px 12px;"
+                    "font-size": "34",
+                    "font-weight": "700",
+                    "color": "#FFD700",
+                    "background-color": "#000000",
+                    "opacity": 0.85,
+                    "padding": "8 12"
                 },
                 {
                     "type": "text",
                     "text": hook_text,
                     "x": "center",
                     "y": "bottom",
-                    "style": "font-size:58px;font-weight:700;color:#FFFFFF;background-color:#000000;opacity:0.75;padding:16px 20px;"
+                    "font-size": "58",
+                    "font-weight": "700",
+                    "color": "#FFFFFF",
+                    "background-color": "#000000",
+                    "opacity": 0.75,
+                    "padding": "16 20"
                 },
                 {
                     "type": "audio",
