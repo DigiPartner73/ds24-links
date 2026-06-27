@@ -29,12 +29,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-liberation
-          pip install requests pillow google-genai --quiet
+          pip install requests pillow --quiet
 
       - name: Produce video
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCED_RECORD_ID: ${{ github.event.client_payload.record_id || github.event.inputs.record_id || '' }}
         run: |
           python3 scripts/produce_video.py
