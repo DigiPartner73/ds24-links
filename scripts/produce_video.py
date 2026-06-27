@@ -7,8 +7,6 @@ BASE_ID  = 'apppfrE10FwXz9IMY'
 TABLE_ID = 'tblm1szgXQZc0mRle'
 CFG_TABLE = 'tblHq1P7Z7bE7hUEj'
 REPO = 'DigiPartner73/ds24-links'
-AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
-GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
 try:
     import requests
@@ -16,8 +14,10 @@ try:
     import google.genai as genai
     import google.genai.types as genai_types
 except Exception as e:
-    print(f'IMPORT FEHLER: {e}')
-    sys.exit(1)
+    print(f'IMPORT FEHLER: {e}'); sys.exit(1)
+
+AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
+GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
 def get_config(key):
     try:
@@ -48,7 +48,7 @@ def fail(rec_id, status, msg):
     at_patch(rec_id, {'Status': status, 'Letzter_Fehler': msg[:500]})
     sys.exit(1)
 
-print('=== DS24 Produce Video v7 | ElevenLabs + Nano Banana + FFmpeg ===')
+print('=== DS24 Produce Video v7 | OpenAI TTS + Nano Banana + FFmpeg ===')
 
 if FORCED_ID:
     print(f'Forced Record: {FORCED_ID}')
@@ -88,27 +88,27 @@ if not volltext:
 
 at_patch(rec_id, {'Status': 'video_processing'})
 
-# SCHRITT 1: ElevenLabs TTS
-print('[1/4] ElevenLabs TTS...')
+# SCHRITT 1: OpenAI TTS
+print('[1/4] OpenAI TTS...')
 t0 = time.time()
-EL_KEY      = get_config('elevenlabs_api_key')
-EL_VOICE_ID = get_config('elevenlabs_voice_id') or '4RZ84U1b4WCqpu57LvIq'
-if not EL_KEY:
-    fail(rec_id, 'fehler_voice', 'elevenlabs_api_key fehlt')
+OPENAI_KEY = get_config('openai_api_key')
+TTS_VOICE  = get_config('openai_tts_voice') or 'shimmer'
+TTS_MODEL  = get_config('openai_tts_model') or 'tts-1'
+if not OPENAI_KEY:
+    fail(rec_id, 'fehler_voice', 'openai_api_key fehlt in Config')
 
 tts = requests.post(
-    f'https://api.elevenlabs.io/v1/text-to-speech/{EL_VOICE_ID}',
-    headers={'xi-api-key': EL_KEY, 'Content-Type': 'application/json', 'Accept': 'audio/mpeg'},
-    json={'text': volltext[:5000], 'model_id': 'eleven_multilingual_v2',
-          'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75}},
+    'https://api.openai.com/v1/audio/speech',
+    headers={'Authorization': f'Bearer {OPENAI_KEY}', 'Content-Type': 'application/json'},
+    json={'model': TTS_MODEL, 'input': volltext[:4096], 'voice': TTS_VOICE},
     timeout=120
 )
 if tts.status_code != 200:
-    fail(rec_id, 'fehler_voice', f'ElevenLabs HTTP {tts.status_code}: {tts.text[:300]}')
+    fail(rec_id, 'fehler_voice', f'OpenAI TTS HTTP {tts.status_code}: {tts.text[:300]}')
 with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
 print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
 
-# SCHRITT 2: Nano Banana
+# SCHRITT 2: Nano Banana Hintergrundbild
 print('[2/4] Nano Banana Hintergrundbild...')
 t0 = time.time()
 NB_KEY = get_config('nanobanana_api_key')
