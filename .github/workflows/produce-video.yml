@@ -1,9 +1,9 @@
-name: DS24 — Produce Video (TTS + Gemini Image + FFmpeg)
+name: DS24 â Produce Video (TTS + Gemini Image + FFmpeg)
 
-# Neue Pipeline: ElevenLabs TTS → Gemini Imagen 9:16 → FFmpeg Ken Burns → GitHub Release
+# Neue Pipeline: ElevenLabs TTS â Gemini Imagen 9:16 â FFmpeg Ken Burns â GitHub Release
 # Ersetzt: nano-banana.yml + SA-06 (ElevenLabs) + SA-07 (JSON2Video)
-# Neue Status-Kette: skript_fertig → video_processing → video_fertig
-# Benötigt GitHub Secrets: AIRTABLE_TOKEN, GEMINI_API_KEY
+# Neue Status-Kette: skript_fertig â video_processing â video_fertig
+# BenÃ¶tigt GitHub Secrets: AIRTABLE_TOKEN, GEMINI_API_KEY
 
 on:
   schedule:
@@ -45,7 +45,7 @@ jobs:
           import requests, os, sys, base64, subprocess, json, time, textwrap
           from PIL import Image, ImageDraw, ImageFont
 
-          # ─── Konfiguration ──────────────────────────────────────────
+          # âââ Konfiguration ââââââââââââââââââââââââââââââââââââââââââ
           AT_TOKEN  = os.environ['AIRTABLE_TOKEN']
           GH_TOKEN  = os.environ['GH_TOKEN']
           FORCED_ID = os.environ.get('FORCED_RECORD_ID', '').strip()
@@ -56,7 +56,7 @@ jobs:
           AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
           GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
-          # ─── Helpers ────────────────────────────────────────────────
+          # âââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââ
           def at_patch(rec_id, fields):
               return requests.patch(
                   f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{rec_id}',
@@ -75,20 +75,20 @@ jobs:
               at_patch(rec_id, {'Status': status, 'Letzter_Fehler': msg[:500]})
               sys.exit(1)
 
-          # ─── API Keys ───────────────────────────────────────────────
+          # âââ API Keys âââââââââââââââââââââââââââââââââââââââââââââââ
           GEMINI_KEY  = os.environ.get('GEMINI_API_KEY', '') or get_config('gemini_api_key')
           EL_KEY      = get_config('elevenlabs_api_key')
           EL_VOICE_ID = get_config('elevenlabs_voice_id_DE') or get_config('elevenlabs_voice_id') or '4RZ84U1b4WCqpu57LvIq'
 
           if not EL_KEY:
-              print('FEHLER: elevenlabs_api_key fehlt — bitte in Airtable Config eintragen')
+              print('FEHLER: elevenlabs_api_key fehlt â bitte in Airtable Config eintragen')
               sys.exit(1)
           if not GEMINI_KEY:
-              print('FEHLER: gemini_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
+              print('FEHLER: gemini_api_key fehlt â bitte in GitHub Secrets + Airtable Config eintragen')
               sys.exit(1)
           print(f'Keys OK | ElevenLabs voice={EL_VOICE_ID} | Gemini={GEMINI_KEY[:8]}...')
 
-          # ─── Record finden ──────────────────────────────────────────
+          # âââ Record finden ââââââââââââââââââââââââââââââââââââââââââ
           if FORCED_ID:
               print(f'Forced Record: {FORCED_ID}')
               r = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}/{FORCED_ID}',
@@ -105,7 +105,7 @@ jobs:
               records = resp.get('records', [])
 
           if not records:
-              print('Nichts zu tun — kein skript_fertig Record.'); sys.exit(0)
+              print('Nichts zu tun â kein skript_fertig Record.'); sys.exit(0)
 
           record   = records[0]
           rec_id   = record['id']
@@ -122,7 +122,7 @@ jobs:
           # Lock
           at_patch(rec_id, {'Status': 'video_processing'})
 
-          # ─── SCHRITT 1: ElevenLabs TTS ──────────────────────────────
+          # âââ SCHRITT 1: ElevenLabs TTS ââââââââââââââââââââââââââââââ
           print('[1/4] ElevenLabs TTS...')
           t0 = time.time()
           tts = requests.post(
@@ -137,7 +137,7 @@ jobs:
           with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
           print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
 
-          # ─── SCHRITT 2: Gemini Imagen 3 — 9:16 Bild ────────────────
+          # âââ SCHRITT 2: Gemini Imagen 3 â 9:16 Bild ââââââââââââââââ
           print('[2/4] Gemini Imagen 9:16...')
           t0 = time.time()
           img_prompt = (
@@ -146,7 +146,7 @@ jobs:
               "shallow depth of field. No faces, no text, no watermarks. Premium feel."
           )
           gem = requests.post(
-              'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict',
+              'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
               params={'key': GEMINI_KEY},
               headers={'Content-Type': 'application/json'},
               json={'instances': [{'prompt': img_prompt}],
@@ -163,7 +163,7 @@ jobs:
           with open('background.jpg', 'wb') as f: f.write(img_bytes)
           print(f'Gemini OK {time.time()-t0:.1f}s | {len(img_bytes)//1024}KB')
 
-          # ─── SCHRITT 3: Pillow Text-Overlay ─────────────────────────
+          # âââ SCHRITT 3: Pillow Text-Overlay âââââââââââââââââââââââââ
           print('[3/4] Text-Overlay + FFmpeg...')
           img = Image.open('background.jpg').convert('RGB').resize((1080, 1920), Image.LANCZOS)
           W, H = 1080, 1920
@@ -180,7 +180,7 @@ jobs:
           draw.rectangle([W-215, 22, W-12, 70], fill=(0,0,0))
           draw.text((W-208, 28), 'Werbung*', font=f_label, fill='#FFD700')
 
-          # Hook-Text unten — Pillow RGBA compositing (kein numpy)
+          # Hook-Text unten â Pillow RGBA compositing (kein numpy)
           if hook:
               lines = textwrap.wrap(hook[:160], width=22)
               line_h = 78
@@ -204,7 +204,7 @@ jobs:
           img.save('background_overlay.jpg', quality=95)
           print(f'Overlay OK (1080x1920)')
 
-          # FFmpeg Ken Burns: JPEG + MP3 → MP4
+          # FFmpeg Ken Burns: JPEG + MP3 â MP4
           r = subprocess.run([
               'ffmpeg', '-y',
               '-loop', '1', '-i', 'background_overlay.jpg',
@@ -222,7 +222,7 @@ jobs:
               fail(rec_id, 'fehler_video', f'FFmpeg: {r.stderr[-400:]}')
           print(f'FFmpeg OK | {os.path.getsize("output.mp4")/1024/1024:.1f}MB')
 
-          # ─── SCHRITT 4: GitHub Release Upload ───────────────────────
+          # âââ SCHRITT 4: GitHub Release Upload âââââââââââââââââââââââ
           print('[4/4] GitHub Release...')
           safe = ''.join(c if c.isalnum() or c=='-' else '' for c in name[:28])
           tag = f'vid-{rec_id[:8]}-{int(time.time())}'
@@ -244,14 +244,14 @@ jobs:
               if r.status_code not in (200, 201):
                   raise Exception(f'{aname} HTTP {r.status_code}')
               url = r.json()['browser_download_url']
-              print(f'  ✓ {aname}')
+              print(f'  â {aname}')
               return url
 
           video_url = upload('output.mp4',            'video/mp4',  'video.mp4')
           audio_url = upload('voiceover.mp3',         'audio/mpeg', 'voiceover.mp3')
           bg_url    = upload('background_overlay.jpg','image/jpeg', 'background.jpg')
 
-          # ─── SCHRITT 5: Airtable Update ─────────────────────────────
+          # âââ SCHRITT 5: Airtable Update âââââââââââââââââââââââââââââ
           at_patch(rec_id, {
               'Status':              'video_fertig',
               'Video_URL':           video_url,
