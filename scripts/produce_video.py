@@ -270,8 +270,7 @@ try:
     # Bug #17: duration: -1 auf Scene-Ebene (Auto-Dauer)
     # Bug #18: Audio PER SCENE, nicht Movie-Ebene
     # Bug #22: duration: -2 auf Video-Element (Loop)
-    # Bug #27: font-weight als numerischer String "700"
-    # Bug #28: font-size als String OHNE "px" "58"
+    # Bug #74: style muss CSS-STRING sein, KEIN Objekt! z.B. "font-size:34px;color:#FFD700;"
     j2v_payload = {
         "resolution": "9:16",
         "quality": "high",
@@ -289,28 +288,14 @@ try:
                     "text": "Werbung*",
                     "x": "right",
                     "y": "top",
-                    "style": {
-                        "font-size": "34",
-                        "font-weight": "700",
-                        "color": "#FFD700",
-                        "background": "#000000",
-                        "opacity": 0.85,
-                        "padding": "8 12"
-                    }
+                    "style": "font-size:34px;font-weight:700;color:#FFD700;background-color:#000000;opacity:0.85;padding:8px 12px;"
                 },
                 {
                     "type": "text",
                     "text": hook_text,
                     "x": "center",
                     "y": "bottom",
-                    "style": {
-                        "font-size": "58",
-                        "font-weight": "700",
-                        "color": "#FFFFFF",
-                        "background": "#000000",
-                        "opacity": 0.75,
-                        "padding": "16 20"
-                    }
+                    "style": "font-size:58px;font-weight:700;color:#FFFFFF;background-color:#000000;opacity:0.75;padding:16px 20px;"
                 },
                 {
                     "type": "audio",
