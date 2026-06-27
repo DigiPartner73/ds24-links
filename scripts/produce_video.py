@@ -188,6 +188,21 @@ try:
     clip_url = CDN_FALLBACK
     nb_ok    = bool(NB_KEY)
 
+    # Clip-Override aus Airtable (manuelle Steuerung pro Produkt, Bug #75-sicher)
+    _clip_ovr = fields.get('Video_Background_URL', '').strip()
+    if _clip_ovr and 'json2video' not in _clip_ovr and 'amazonaws' not in _clip_ovr:
+        try:
+            _r = requests.get(_clip_ovr, timeout=60, allow_redirects=True,
+                              headers={'User-Agent': 'Mozilla/5.0 (compatible; DS24/1.0)'})
+            if _r.status_code == 200:
+                clip_url = gh_upload(upload_base, 'clip.mp4', _r.content, 'video/mp4')
+                nb_ok = False
+                print(f'[2] Clip-Override re-hosted: {clip_url[:80]}')
+            else:
+                print(f'[2] Clip-Override HTTP {_r.status_code} → CDN_FALLBACK')
+        except Exception as _e:
+            print(f'[2] Clip-Override Fehler: {_e} → CDN_FALLBACK')
+
     if nb_ok:
         # Rate-Limit vorprÃ¼fen
         rl_reset = get_config('nanobanana_rate_limit_reset')
