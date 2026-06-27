@@ -137,7 +137,7 @@ jobs:
           with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
           print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
 
-          # ─── SCHRITT 2: Gemini Imagen 3 — 9:16 Bild ────────────────
+          # ─── SCHRITT 2: Gemini Imagen 4 — 9:16 Bild ────────────────
           print('[2/4] Gemini Imagen 9:16...')
           t0 = time.time()
           img_prompt = (
@@ -146,7 +146,7 @@ jobs:
               "shallow depth of field. No faces, no text, no watermarks. Premium feel."
           )
           gem = requests.post(
-              'https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-001:predict',
+              'https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict',
               params={'key': GEMINI_KEY},
               headers={'Content-Type': 'application/json'},
               json={'instances': [{'prompt': img_prompt}],
