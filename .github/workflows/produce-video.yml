@@ -70,7 +70,7 @@ jobs:
                                headers=AT_H, timeout=10).json()
               records = [r] if r.get('id') else []
           else:
-              resp = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLEID}',
+              resp = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}',
                                   headers=AT_H,
                                   params={'filterByFormula': '{Status}="skript_fertig"',
                                           'sort[0][field]': 'Profit_Score',
@@ -177,7 +177,7 @@ jobs:
               '-vf', (
                   'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,'
                   "zoompan=z='if(eq(on,1),1.15,max(1.001,zoom-0.0008))'"
-                  ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x:1920:fps=25"
+                  ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=25"
               ),
               '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
               '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
