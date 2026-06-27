@@ -1,7 +1,7 @@
-name: DS24 - Produce Video (TTS + Gemini Image + FFmpeg)
+name: DS24 - Produce Video (gTTS + PIL Gradient + FFmpeg)
 
-# Pipeline: gTTS -> Gemini Image -> FFmpeg Ken Burns -> GitHub Release
-# Keys: GEMINI_API_KEY direkt aus GitHub Secrets (kein OpenAI noetig)
+# Pipeline: gTTS -> PIL Dark Gradient -> FFmpeg Ken Burns -> GitHub Release
+# Keys: Nur AIRTABLE_TOKEN + GITHUB_TOKEN (kein externer TTS/Image-Key noetig)
 # Status-Kette: skript_fertig -> video_processing -> video_fertig
 
 on:
@@ -30,29 +30,25 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get install -y ffmpeg fonts-liberation
-          pip install requests pillow google-genai gtts --quiet
+          pip install requests pillow gtts --quiet
 
       - name: Produce video
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FORCED_RECORD_ID: ${{ github.event.client_payload.record_id || github.event.inputs.record_id || '' }}
         run: |
           python3 << 'PYEOF'
-          import requests, os, sys, base64, subprocess, json, time, textwrap
-          import google.genai as genai
-          import google.genai.types as genai_types
+          import requests, os, sys, subprocess, time, textwrap, math
           from gtts import gTTS
-          from PIL import Image, ImageDraw, ImageFont
+          from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-          AT_TOKEN   = os.environ['AIRTABLE_TOKEN']
-          GH_TOKEN   = os.environ['GH_TOKEN']
-          GEMINI_KEY = os.environ['GEMINI_API_KEY']
-          FORCED_ID  = os.environ.get('FORCED_RECORD_ID', '').strip()
-          BASE_ID    = 'apppfrE10FwXz9IMY'
-          TABLE_ID   = 'tblm1szgXQZc0mRle'
-          REPO       = 'DigiPartner73/ds24-links'
+          AT_TOKEN  = os.environ['AIRTABLE_TOKEN']
+          GH_TOKEN  = os.environ['GH_TOKEN']
+          FORCED_ID = os.environ.get('FORCED_RECORD_ID', '').strip()
+          BASE_ID   = 'apppfrE10FwXz9IMY'
+          TABLE_ID  = 'tblm1szgXQZc0mRle'
+          REPO      = 'DigiPartner73/ds24-links'
           AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
           GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
@@ -66,9 +62,7 @@ jobs:
               at_patch(rec_id, {'Status': status, 'Letzter_Fehler': msg[:500]})
               sys.exit(1)
 
-          if not GEMINI_KEY:
-              print('FEHLER: GEMINI_API_KEY Secret fehlt'); sys.exit(1)
-          print('Keys OK | gTTS + Gemini Image')
+          print('Start | gTTS + PIL Gradient + FFmpeg')
 
           if FORCED_ID:
               print(f'Forced Record: {FORCED_ID}')
@@ -102,49 +96,46 @@ jobs:
 
           at_patch(rec_id, {'Status': 'video_processing'})
 
-          # SCHRITT 1: gTTS (Google Translate TTS - kostenlos)
-          print('[1/4] gTTS (Google Translate TTS)...')
+          # SCHRITT 1: gTTS
+          print('[1/4] gTTS...')
           t0 = time.time()
           lang_map = {'DE': 'de', 'EN': 'en', 'ES': 'es', 'PT': 'pt', 'FR': 'fr', 'IT': 'it'}
           lang = lang_map.get(sprache.upper(), 'de')
           try:
-              tts_obj = gTTS(text=volltext[:4096], lang=lang, slow=False)
-              tts_obj.save('voiceover.mp3')
+              gTTS(text=volltext[:4096], lang=lang, slow=False).save('voiceover.mp3')
               print(f'TTS OK {time.time()-t0:.1f}s | {os.path.getsize("voiceover.mp3")//1024}KB')
           except Exception as e:
-              fail(rec_id, 'fehler_voice', f'gTTS Fehler: {str(e)[:300]}')
+              fail(rec_id, 'fehler_voice', f'gTTS: {str(e)[:300]}')
 
-          # SCHRITT 2: Gemini Image (9:16)
-          print('[2/4] Gemini Hintergrundbild...')
-          t0 = time.time()
-          nb_client = genai.Client(api_key=GEMINI_KEY)
-          img_prompt = (
-              f"Professional dark luxury background for digital product '{name}'. "
-              "Cinematic lighting, subtle golden color accent, abstract and premium feel. "
-              "No text, no logos, no people, no faces. "
-              "Vertical format 9:16 for Instagram Reels. Ultra high quality, photorealistic."
-          )
-          nb_resp = nb_client.models.generate_content(
-              model='gemini-2.0-flash-preview-image-generation',
-              contents=img_prompt,
-              config=genai_types.GenerateContentConfig(
-                  response_modalities=['image']
-              )
-          )
-          img_bytes = None
-          for part in nb_resp.candidates[0].content.parts:
-              if part.inline_data:
-                  img_bytes = base64.b64decode(part.inline_data.data)
-                  break
-          if not img_bytes:
-              fail(rec_id, 'fehler_video', 'Gemini: keine Bild-Daten in Response')
-          with open('background.jpg', 'wb') as f: f.write(img_bytes)
-          print(f'Gemini OK {time.time()-t0:.1f}s | {len(img_bytes)//1024}KB')
-
-          # SCHRITT 3: Pillow Text-Overlay
-          print('[3/4] Text-Overlay + FFmpeg...')
-          img = Image.open('background.jpg').convert('RGB').resize((1080, 1920), Image.LANCZOS)
+          # SCHRITT 2: PIL Dark Luxury Gradient
+          print('[2/4] Background (PIL Dark Gradient)...')
           W, H = 1080, 1920
+          bg = Image.new('RGB', (W, H))
+          draw_bg = ImageDraw.Draw(bg)
+          # Verlauf: Dunkel-Navy oben -> Dunkel-Gold-Schwarz unten
+          for y in range(H):
+              t = y / H
+              # Smooth dark gradient with warm undertones
+              r = int(4 + 28 * t)
+              g = int(3 + 18 * t)
+              b = int(12 + 8 * t)
+              draw_bg.line([(0, y), (W, y)], fill=(r, g, b))
+          # Goldfarbener Lichtschein oben-mittig
+          glow = Image.new('RGB', (W, H), (0, 0, 0))
+          gd = ImageDraw.Draw(glow)
+          gd.ellipse([W//2-350, -250, W//2+350, 450], fill=(55, 38, 5))
+          glow = glow.filter(ImageFilter.GaussianBlur(100))
+          bg = Image.blend(bg, glow, 0.65)
+          # Dezente diagonale Lichtstreifen
+          draw_bg2 = ImageDraw.Draw(bg)
+          for xi, col in [(W//3, (70,50,8)), (W//2, (90,65,10)), (W*2//3, (55,40,6))]:
+              draw_bg2.line([(xi, 0), (xi+200, H)], fill=col, width=2)
+          bg.save('background.jpg', quality=95)
+          print('Background OK (1080x1920) | PIL Gradient')
+
+          # SCHRITT 3: Text-Overlay + FFmpeg
+          print('[3/4] Text-Overlay + FFmpeg...')
+          img = bg.copy()
           draw = ImageDraw.Draw(img)
 
           FONT_BOLD = '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf'
@@ -177,20 +168,20 @@ jobs:
                   draw.text((x, y), line, font=f_hook, fill='white')
 
           img.save('background_overlay.jpg', quality=95)
-          print('Overlay OK (1080x1920)')
+          print('Overlay OK')
 
           r = subprocess.run([
               'ffmpeg', '-y',
-             '-loop', '1', '-i', 'background_overlay.jpg',
-             '-i', 'voiceover.mp3',
-             '-vf', (
-                 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,'
-                 "zoompan=z='if(eq(on,1),1.15,max(1.001,zoom-0.0008))'"
-                 ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x:1920:fps=25"
-             ),
-             '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
-             '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
-             '-shortest', 'output.mp4'
+              '-loop', '1', '-i', 'background_overlay.jpg',
+              '-i', 'voiceover.mp3',
+              '-vf', (
+                  'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,'
+                  "zoompan=z='if(eq(on,1),1.15,max(1.001,zoom-0.0008))'"
+                  ":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x:1920:fps=25"
+              ),
+              '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+              '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
+              '-shortest', 'output.mp4'
           ], capture_output=True, text=True)
           if r.returncode != 0:
               fail(rec_id, 'fehler_video', f'FFmpeg: {r.stderr[-400:]}')
@@ -206,7 +197,7 @@ jobs:
                     'body': rec_id, 'draft': False, 'prerelease': False},
               timeout=30)
           if rel.status_code not in (200, 201):
-              fail(rec_id, 'fehler_video',                   f'Release HTTP {rel.status_code}: {rel.text[:200]}')
+              fail(rec_id, 'fehler_video', f'Release HTTP {rel.status_code}: {rel.text[:200]}')
           upload_base = rel.json()['upload_url'].split('{')[0]
 
           def upload(path, ctype, aname):
