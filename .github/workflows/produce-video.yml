@@ -1,9 +1,9 @@
 name: DS24 — Produce Video (TTS + Gemini Image + FFmpeg)
 
-# Neue Pipeline: ElevenLabs TTS → Gemini Imagen 9:16 → FFmpeg Ken Burns → GitHub Release
+# Neue Pipeline: ElevenLabs TTS → Nano Banana (Gemini gemini-3.1-flash-image-preview) → FFmpeg Ken Burns → GitHub Release
 # Ersetzt: nano-banana.yml + SA-06 (ElevenLabs) + SA-07 (JSON2Video)
 # Neue Status-Kette: skript_fertig → video_processing → video_fertig
-# Benötigt GitHub Secrets: AIRTABLE_TOKEN, GEMINI_API_KEY
+# Benötigt GitHub Secrets: AIRTABLE_TOKEN (GITHUB_TOKEN wird automatisch bereitgestellt)
 
 on:
   schedule:
@@ -31,18 +31,18 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get install -y ffmpeg fonts-liberation
-          pip install requests pillow --quiet
+          pip install requests pillow google-genai --quiet
 
       - name: Produce video
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FORCED_RECORD_ID: ${{ github.event.client_payload.record_id || github.event.inputs.record_id || '' }}
         run: |
           python3 << 'PYEOF'
           import requests, os, sys, base64, subprocess, json, time, textwrap
+          import google.genai as genai
+          import google.genai.types as genai_types
           from PIL import Image, ImageDraw, ImageFont
 
           # ─── Konfiguration ──────────────────────────────────────────
@@ -76,17 +76,13 @@ jobs:
               sys.exit(1)
 
           # ─── API Keys ───────────────────────────────────────────────
-          GEMINI_KEY  = os.environ.get('GEMINI_API_KEY', '') or get_config('gemini_api_key')
           EL_KEY      = get_config('elevenlabs_api_key')
           EL_VOICE_ID = get_config('elevenlabs_voice_id_DE') or get_config('elevenlabs_voice_id') or '4RZ84U1b4WCqpu57LvIq'
 
           if not EL_KEY:
               print('FEHLER: elevenlabs_api_key fehlt — bitte in Airtable Config eintragen')
               sys.exit(1)
-          if not GEMINI_KEY:
-              print('FEHLER: gemini_api_key fehlt — bitte in GitHub Secrets + Airtable Config eintragen')
-              sys.exit(1)
-          print(f'Keys OK | ElevenLabs voice={EL_VOICE_ID} | Gemini={GEMINI_KEY[:8]}...')
+          print(f'Keys OK | ElevenLabs voice={EL_VOICE_ID}')
 
           # ─── Record finden ──────────────────────────────────────────
           if FORCED_ID:
@@ -137,31 +133,38 @@ jobs:
           with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
           print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
 
-          # ─── SCHRITT 2: Gemini Imagen 4 — 9:16 Bild ────────────────
-          print('[2/4] Gemini Imagen 9:16...')
+          # ─── SCHRITT 2: Nano Banana (Gemini) — 9:16 Bild ───────────
+          print('[2/4] Nano Banana Hintergrundbild...')
           t0 = time.time()
+          NB_KEY = get_config('nano_banana_api_key')
+          if not NB_KEY:
+              fail(rec_id, 'fehler_video', 'nano_banana_api_key fehlt in Airtable Config')
+          nb_client = genai.Client(api_key=NB_KEY)
           img_prompt = (
-              f"Cinematic 9:16 vertical portrait photo for digital product '{name}'. "
-              "Aspirational lifestyle, clean modern aesthetic, warm soft lighting, "
-              "shallow depth of field. No faces, no text, no watermarks. Premium feel."
+              f"Professional dark luxury background for digital product '{name}'. "
+              "Cinematic lighting, subtle golden color accent, abstract and premium feel. "
+              "No text, no logos, no people, no faces. "
+              "Vertical format 9:16 for Instagram Reels. Ultra high quality, photorealistic."
           )
-          gem = requests.post(
-              'https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict',
-              params={'key': GEMINI_KEY},
-              headers={'Content-Type': 'application/json'},
-              json={'instances': [{'prompt': img_prompt}],
-                    'parameters': {'sampleCount': 1, 'aspectRatio': '9:16',
-                                   'outputMimeType': 'image/jpeg'}},
-              timeout=90)
-          if gem.status_code != 200:
-              fail(rec_id, 'fehler_video', f'Gemini HTTP {gem.status_code}: {gem.text[:300]}')
-          try:
-              img_b64 = gem.json()['predictions'][0]['bytesBase64Encoded']
-          except Exception as e:
-              fail(rec_id, 'fehler_video', f'Gemini parse error: {e} | {gem.text[:200]}')
-          img_bytes = base64.b64decode(img_b64)
+          nb_resp = nb_client.models.generate_content(
+              model='gemini-3.1-flash-image-preview',
+              contents=img_prompt,
+              config=genai_types.GenerateContentConfig(
+                  response_modalities=['image'],
+                  image_generation_config=genai_types.ImageGenerationConfig(
+                      aspect_ratio='9:16', number_of_images=1
+                  )
+              )
+          )
+          img_bytes = None
+          for part in nb_resp.candidates[0].content.parts:
+              if part.inline_data:
+                  img_bytes = base64.b64decode(part.inline_data.data)
+                  break
+          if not img_bytes:
+              fail(rec_id, 'fehler_video', 'Nano Banana: keine Bild-Daten in Response')
           with open('background.jpg', 'wb') as f: f.write(img_bytes)
-          print(f'Gemini OK {time.time()-t0:.1f}s | {len(img_bytes)//1024}KB')
+          print(f'Nano Banana OK {time.time()-t0:.1f}s | {len(img_bytes)//1024}KB')
 
           # ─── SCHRITT 3: Pillow Text-Overlay ─────────────────────────
           print('[3/4] Text-Overlay + FFmpeg...')
@@ -262,3 +265,4 @@ jobs:
           print(f'\n=== FERTIG === Record={rec_id} Status=video_fertig')
           print(f'Video: {video_url}')
           PYEOF
+                          
