@@ -48,7 +48,7 @@ def fail(rec_id, status, msg):
     at_patch(rec_id, {'Status': status, 'Letzter_Fehler': msg[:500]})
     sys.exit(1)
 
-print('=== DS24 Produce Video v7 | OpenAI TTS + Nano Banana + FFmpeg ===')
+print('=== DS24 Produce Video v7 | Fish Audio TTS + Nano Banana + FFmpeg ===')
 
 if FORCED_ID:
     print(f'Forced Record: {FORCED_ID}')
@@ -88,23 +88,29 @@ if not volltext:
 
 at_patch(rec_id, {'Status': 'video_processing'})
 
-# SCHRITT 1: OpenAI TTS
-print('[1/4] OpenAI TTS...')
+# SCHRITT 1: Fish Audio TTS (kostenlos, kein Limit)
+print('[1/4] Fish Audio TTS...')
 t0 = time.time()
-OPENAI_KEY = get_config('openai_api_key')
-TTS_VOICE  = get_config('openai_tts_voice') or 'shimmer'
-TTS_MODEL  = get_config('openai_tts_model') or 'tts-1'
-if not OPENAI_KEY:
-    fail(rec_id, 'fehler_voice', 'openai_api_key fehlt in Config')
+FISH_KEY = get_config('fish_audio_api_key')
+if not FISH_KEY:
+    fail(rec_id, 'fehler_voice', 'fish_audio_api_key fehlt in Config')
 
 tts = requests.post(
-    'https://api.openai.com/v1/audio/speech',
-    headers={'Authorization': f'Bearer {OPENAI_KEY}', 'Content-Type': 'application/json'},
-    json={'model': TTS_MODEL, 'input': volltext[:4096], 'voice': TTS_VOICE},
+    'https://api.fish.audio/v1/tts',
+    headers={
+        'Authorization': f'Bearer {FISH_KEY}',
+        'Content-Type': 'application/json',
+        'model': 's2.1-pro-free'
+    },
+    json={
+        'text': volltext[:4096],
+        'format': 'mp3',
+        'latency': 'normal'
+    },
     timeout=120
 )
 if tts.status_code != 200:
-    fail(rec_id, 'fehler_voice', f'OpenAI TTS HTTP {tts.status_code}: {tts.text[:300]}')
+    fail(rec_id, 'fehler_voice', f'Fish Audio TTS HTTP {tts.status_code}: {tts.text[:300]}')
 with open('voiceover.mp3', 'wb') as f: f.write(tts.content)
 print(f'TTS OK {time.time()-t0:.1f}s | {len(tts.content)//1024}KB')
 
@@ -179,7 +185,6 @@ if hook:
         draw.text((x,y), ln, font=f_hk, fill='white')
 
 img.save('background_overlay.jpg', quality=95)
-print('Overlay OK')
 
 r = subprocess.run([
     'ffmpeg', '-y', '-loop', '1', '-i', 'background_overlay.jpg', '-i', 'voiceover.mp3',
