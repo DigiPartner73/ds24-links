@@ -18,7 +18,7 @@ CFG_TABLE = 'tblHq1P7Z7bE7hUEj'
 REPO      = 'DigiPartner73/ds24-links'
 
 NB_ENDPOINT  = 'https://nanobananavideo.com/api/v1/text-to-video.php'
-CDN_FALLBACK = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
+CDN_FALLBACK = 'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4'
 
 try:
     import requests
@@ -254,6 +254,27 @@ try:
             print(f'NB Fehler: {e}. CDN-Fallback.')
 
     print(f'Clip URL: {clip_url[:80]}')
+
+    # ── CDN-Fallback Re-Hosting ────────────────────────────────────────────────
+    # JSON2Video kann externe CDNs (Pexels, Google) NICHT direkt fetchen → 403
+    # Lösung: Clip lokal im Runner laden, zu GitHub Release hochladen → GitHub-URL an J2V
+    if clip_url == CDN_FALLBACK:
+        print('[2b] CDN-Fallback Re-Hosting via GitHub Release...')
+        try:
+            fb_resp = requests.get(
+                CDN_FALLBACK,
+                timeout=60,
+                allow_redirects=True,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; DS24/1.0)'}
+            )
+            if fb_resp.status_code == 200:
+                clip_url = gh_upload(upload_base, 'clip.mp4', fb_resp.content, 'video/mp4')
+                print(f'Fallback-Clip re-hosted: {clip_url[:80]}')
+            else:
+                fail(rec_id, 'fehler_video',
+                     f'CDN-Fallback Download HTTP {fb_resp.status_code}: {fb_resp.text[:200]}')
+        except Exception as e:
+            fail(rec_id, 'fehler_video', f'CDN-Fallback Re-Hosting Fehler: {e}')
 
     # ââ SCHRITT 3: JSON2Video Rendering ââââââââââââââââââââââââââââââââââââââ
     print('[3/3] JSON2Video Render...')
