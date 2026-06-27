@@ -70,7 +70,7 @@ jobs:
                                headers=AT_H, timeout=10).json()
               records = [r] if r.get('id') else []
           else:
-              resp = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_ID}',
+              resp = requests.get(f'https://api.airtable.com/v0/{BASE_ID}/{TABLEID}',
                                   headers=AT_H,
                                   params={'filterByFormula': '{Status}="skript_fertig"',
                                           'sort[0][field]': 'Profit_Score',
