@@ -1,7 +1,7 @@
 """
 DS24 Produce Video v10
-Pipeline: Fish Audio TTS → Nano Banana REST API → JSON2Video → Airtable
-Einzige externe Abhängigkeit: requests
+Pipeline: Fish Audio TTS â Nano Banana REST API â JSON2Video â Airtable
+Einzige externe AbhÃ¤ngigkeit: requests
 KEIN google-genai, KEIN Pexels, KEIN FFmpeg, KEIN Pillow
 """
 
@@ -31,7 +31,7 @@ print(f'AT_TOKEN: {AT_TOKEN[:8]}... | GH_TOKEN: {GH_TOKEN[:8]}...')
 AT_H = {'Authorization': f'Bearer {AT_TOKEN}', 'Content-Type': 'application/json'}
 GH_H = {'Authorization': f'token {GH_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
 
-# ── Hilfsfunktionen ──────────────────────────────────────────────────────────
+# ââ Hilfsfunktionen ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 def get_config(key):
     try:
@@ -96,10 +96,10 @@ def gh_upload(upload_base, filename, data, content_type):
         raise Exception(f'{filename} Upload HTTP {r.status_code}: {r.text[:200]}')
     return r.json()['browser_download_url']
 
-# ── Globaler Exception-Handler — umschließt die gesamte Pipeline ─────────────
+# ââ Globaler Exception-Handler â umschlieÃt die gesamte Pipeline âââââââââââââ
 try:
 
-    # ── Record laden ──────────────────────────────────────────────────────────
+    # ââ Record laden ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
     print('Lade Record...')
     if FORCED_ID:
         print(f'Forced Record: {FORCED_ID}')
@@ -137,9 +137,9 @@ try:
         fail(rec_id, 'fehler_voice', 'Script_Volltext ist leer')
 
     at_patch(rec_id, {'Status': 'video_processing'})
-    print('Status → video_processing')
+    print('Status â video_processing')
 
-    # ── GitHub Release erstellen ──────────────────────────────────────────────
+    # ââ GitHub Release erstellen ââââââââââââââââââââââââââââââââââââââââââââââ
     print('GitHub Release erstellen...')
     safe = ''.join(c if c.isalnum() or c == '-' else '' for c in name[:28])
     tag  = f'vid-{rec_id[:8]}-{int(time.time())}'
@@ -155,7 +155,7 @@ try:
     upload_base = rel.json()['upload_url'].split('{')[0]
     print(f'GitHub Release OK: {tag}')
 
-    # ── SCHRITT 1: Fish Audio TTS ─────────────────────────────────────────────
+    # ââ SCHRITT 1: Fish Audio TTS âââââââââââââââââââââââââââââââââââââââââââââ
     print('[1/3] Fish Audio TTS...')
     t0 = time.time()
     FISH_KEY = get_config('fish_audio_api_key')
@@ -181,7 +181,7 @@ try:
     voiceover_url = gh_upload(upload_base, 'voiceover.mp3', audio_data, 'audio/mpeg')
     print(f'Voiceover URL: {voiceover_url[:80]}')
 
-    # ── SCHRITT 2: Nano Banana REST API ──────────────────────────────────────
+    # ââ SCHRITT 2: Nano Banana REST API ââââââââââââââââââââââââââââââââââââââ
     print('[2/3] Nano Banana Video-Clip...')
     t0 = time.time()
     NB_KEY   = get_config('nanobanana_api_key')
@@ -189,7 +189,7 @@ try:
     nb_ok    = bool(NB_KEY)
 
     if nb_ok:
-        # Rate-Limit vorprüfen
+        # Rate-Limit vorprÃ¼fen
         rl_reset = get_config('nanobanana_rate_limit_reset')
         if rl_reset and rl_reset.strip():
             try:
@@ -255,7 +255,7 @@ try:
 
     print(f'Clip URL: {clip_url[:80]}')
 
-    # ── SCHRITT 3: JSON2Video Rendering ──────────────────────────────────────
+    # ââ SCHRITT 3: JSON2Video Rendering ââââââââââââââââââââââââââââââââââââââ
     print('[3/3] JSON2Video Render...')
     t0 = time.time()
     J2V_KEY   = get_config('json2video_api_key')
@@ -266,7 +266,7 @@ try:
 
     # JSON2Video Bug-Regeln:
     # Bug #1:  volume KOMPLETT WEGLASSEN
-    # Bug #2:  Job-ID heißt "project", nicht "movie_id"
+    # Bug #2:  Job-ID heiÃt "project", nicht "movie_id"
     # Bug #17: duration: -1 auf Scene-Ebene (Auto-Dauer)
     # Bug #18: Audio PER SCENE, nicht Movie-Ebene
     # Bug #22: duration: -2 auf Video-Element (Loop)
@@ -331,12 +331,12 @@ try:
              f'JSON2Video Create HTTP {j2v_create.status_code}: {j2v_create.text[:300]}')
 
     j2v_data   = j2v_create.json()
-    project_id = j2t_data.get('project')   # Bug #2: "project" nicht "movie_id"!
+    project_id = j2v_data.get('project')   # Bug #2: "project" nicht "movie_id"!
     if not project_id:
         fail(rec_id, 'fehler_video', f'JSON2Video: kein project in Response: {j2v_data}')
     print(f'JSON2Video Job: {project_id}')
 
-    # Pollen bis fertig (max 20 Min = 120 × 10s)
+    # Pollen bis fertig (max 20 Min = 120 Ã 10s)
     video_url = None
     for attempt in range(120):
         time.sleep(10)
@@ -359,7 +359,7 @@ try:
     print(f'JSON2Video OK {time.time()-t0:.1f}s')
     print(f'Video URL: {video_url[:80]}')
 
-    # ── SCHRITT 4: Airtable finalisieren ─────────────────────────────────────
+    # ââ SCHRITT 4: Airtable finalisieren âââââââââââââââââââââââââââââââââââââ
     at_patch(rec_id, {
         'Status':               'video_fertig',
         'Video_URL':            video_url,
