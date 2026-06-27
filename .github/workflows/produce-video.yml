@@ -265,4 +265,3 @@ jobs:
           print(f'\n=== FERTIG === Record={rec_id} Status=video_fertig')
           print(f'Video: {video_url}')
           PYEOF
-                          
