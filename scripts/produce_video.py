@@ -18,7 +18,7 @@ CFG_TABLE = 'tblHq1P7Z7bE7hUEj'
 REPO      = 'DigiPartner73/ds24-links'
 
 NB_ENDPOINT  = 'https://nanobananavideo.com/api/v1/text-to-video.php'
-CDN_FALLBACK = 'https://videos.pexels.com/video-files/7026684/7026684-sd_540_960_24fps.mp4'
+CDN_FALLBACK = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4'
 
 try:
     import requests
